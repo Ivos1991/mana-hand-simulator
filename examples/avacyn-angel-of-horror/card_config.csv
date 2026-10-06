@@ -7,7 +7,7 @@ Arcane Signet,2,mana_rock,false
 Archive Arbiter,0,unscored,false
 Archon of Cruelty,0,unscored,false
 Ashnod's Altar,0,unscored,false
-Azog, Moria's Ruin,0,unscored,false
+"Azog, Moria's Ruin",0,unscored,false
 Black Market Connections,1.5,acceleration,false
 Blasphemous Edict,0,unscored,false
 Blood Pet,1,ramp,false
@@ -28,7 +28,7 @@ Everflowing Chalice,1.5,mana_rock,false
 Extraplanar Lens,2,big_mana,false
 Fell the Profane,0,mdfc_land,true
 Fellwar Stone,2,mana_rock,false
-Gisa, Glorious Resurrector,0,unscored,false
+"Gisa, Glorious Resurrector",0,unscored,false
 Grave Betrayal,0,unscored,false
 Gravelighter,0,unscored,false
 Gray Merchant of Asphodel,0,unscored,false
@@ -38,8 +38,8 @@ Heartless Summoning,3,premium_acceleration,false
 High Market,0,land,true
 Innocuous Rat,0,unscored,false
 Jet Medallion,2,discount,false
-K'rrik, Son of Yawgmoth,2,accelerator,false
-Kokusho, the Evening Star,0,unscored,false
+"K'rrik, Son of Yawgmoth",2,accelerator,false
+"Kokusho, the Evening Star",0,unscored,false
 Malakir Rebirth,0,mdfc_land,true
 Mana Vault,3,premium_acceleration,false
 Marionette Apprentice,0,unscored,false
@@ -47,7 +47,7 @@ Massacre Wurm,0,unscored,false
 Midnight Reaper,0,unscored,false
 Necropotence,0,unscored,false
 Nirkana Revenant,1,big_mana,false
-Nykthos, Shrine to Nyx,1,conditional_mana,true
+"Nykthos, Shrine to Nyx",1,conditional_mana,true
 Phyrexian Altar,0,unscored,false
 Phyrexian Arena,0,unscored,false
 Phyrexian Reclamation,0,unscored,false
@@ -57,15 +57,15 @@ Plaguecrafter,0,unscored,false
 Ruthless Technomancer,0,unscored,false
 Sheoldred,0,unscored,false
 Shriekmaw,0,unscored,false
-Sidisi, Undead Vizier,0,unscored,false
+"Sidisi, Undead Vizier",0,unscored,false
 Skullclamp,0,unscored,false
 Snow-Covered Swamp,0,land,true
 Sol Ring,3,premium_acceleration,false
 Soldevi Adnate,0,unscored,false
 Solemn Simulacrum,0,unscored,false
 Spawning Pit,0,unscored,false
-Susur Secundi, Void Altar,0,land,true
-Syr Konrad, the Grim,0,unscored,false
+"Susur Secundi, Void Altar",0,land,true
+"Syr Konrad, the Grim",0,unscored,false
 The Meathook Massacre,0,unscored,false
 The Sibsig Ceremony,2,discount,false
 The Soul Stone,2,mana_rock,false
@@ -74,7 +74,7 @@ Thran Dynamo,2,mana_rock,false
 Toxic Deluge,0,unscored,false
 Twilight Diviner,0,unscored,false
 Umbral Collar Zealot,0,unscored,false
-Urborg, Tomb of Yawgmoth,0,land,true
+"Urborg, Tomb of Yawgmoth",0,land,true
 Urza's Cave,0,land,true
 Viscera Seer,0,unscored,false
 Wake the Dead,0,unscored,false
