@@ -1,0 +1,84 @@
+# Avacyn, Angel of Horror — 99-card library used for opening-hand simulation.
+# Commander is intentionally excluded because it begins in the command zone.
+
+1 Accursed Marauder
+1 Agadeem's Awakening
+1 Altar of Dementia
+1 Ancient Tomb
+1 Arcane Signet
+1 Archive Arbiter
+1 Archon of Cruelty
+1 Ashnod's Altar
+1 Azog, Moria's Ruin
+1 Black Market Connections
+1 Blasphemous Edict
+1 Blood Pet
+1 Blood Vassal
+1 Boggart Trawler
+1 Bojuka Bog
+1 Bontu's Monument
+1 Cabal Coffers
+1 Cabal Stronghold
+1 Carrion Feeder
+1 Castle Locthwain
+1 Command Beacon
+1 Crypt Ghast
+1 Damnation
+1 Diabolic Intent
+1 Disciple of Bolas
+1 Everflowing Chalice
+1 Extraplanar Lens
+1 Fell the Profane
+1 Fellwar Stone
+1 Gisa, Glorious Resurrector
+1 Grave Betrayal
+1 Gravelighter
+1 Gray Merchant of Asphodel
+1 Grim Haruspex
+1 Hagra Mauling
+1 Heartless Summoning
+1 High Market
+1 Innocuous Rat
+1 Jet Medallion
+1 K'rrik, Son of Yawgmoth
+1 Kokusho, the Evening Star
+1 Malakir Rebirth
+1 Mana Vault
+1 Marionette Apprentice
+1 Massacre Wurm
+1 Midnight Reaper
+1 Necropotence
+1 Nirkana Revenant
+1 Nykthos, Shrine to Nyx
+1 Phyrexian Altar
+1 Phyrexian Arena
+1 Phyrexian Reclamation
+1 Phyrexian Tower
+1 Pitiless Plunderer
+1 Plaguecrafter
+1 Ruthless Technomancer
+1 Sheoldred
+1 Shriekmaw
+1 Sidisi, Undead Vizier
+1 Skullclamp
+19 Snow-Covered Swamp
+1 Sol Ring
+1 Soldevi Adnate
+1 Solemn Simulacrum
+1 Spawning Pit
+1 Susur Secundi, Void Altar
+1 Syr Konrad, the Grim
+1 The Meathook Massacre
+1 The Sibsig Ceremony
+1 The Soul Stone
+1 Thieving Amalgam
+1 Thran Dynamo
+1 Toxic Deluge
+1 Twilight Diviner
+1 Umbral Collar Zealot
+1 Urborg, Tomb of Yawgmoth
+1 Urza's Cave
+1 Viscera Seer
+1 Wake the Dead
+1 Warren Soultrader
+1 Worn Powerstone
