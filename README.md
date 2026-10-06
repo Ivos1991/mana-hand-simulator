@@ -89,9 +89,12 @@ mana-hand-simulator --iterations 100000 --seed 42
 
 ## Avacyn example
 
-The exact deck and weights used while developing the simulator are included in:
+The exact Avacyn deck and complete per-card configuration used while developing the simulator are included in:
 
-`examples/avacyn-angel-of-horror/`
+- `examples/avacyn-angel-of-horror/decklist.txt` — full 99-card library
+- `examples/avacyn-angel-of-horror/card_config.csv` — every card, with land flags and the exact acceleration weights used
+
+The files under `data/` are only a small generic starter example.
 
 Run the 1,000,000-hand simulation with:
 
