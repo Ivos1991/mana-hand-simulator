@@ -1,17 +1,17 @@
 # Mana Hand Simulator
 
-A configurable Monte Carlo simulator for evaluating opening hands and mulligan quality in Magic: The Gathering Commander decks.
+A configurable Monte Carlo simulator for analyzing MTG Commander opening hands and mulligans.
 
-## Usage
+## Quick start
 
-1. Edit `data/decklist.txt`.
-2. Edit `data/card_weights.csv` to assign acceleration values and categories.
+1. Put your deck in `data/decklist.txt`.
+2. Configure lands and card weights in `data/card_config.csv`.
 3. Run:
 
 ```bash
 python -m mana_hand_simulator.cli --iterations 100000
 ```
 
-The simulator reports A/B/C/D hand-quality percentages for the opening seven, free mulligan, and London mulligan to six.
+Outputs A/B/C/D hand-quality percentages for the opening seven, free mulligan, and London mulligan to six.
 
-The scoring logic is intentionally configurable so different decks can reuse the same simulation engine without editing the code.
+Deck data and scoring inputs live outside the Python code so the simulator can be reused for different decks.
