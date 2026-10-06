@@ -1,0 +1,38 @@
+card_name,weight,type,is_land
+Agadeem's Awakening,0,mdfc_land,true
+Ancient Tomb,3,premium_acceleration,true
+Arcane Signet,2,mana_rock,false
+Black Market Connections,1.5,acceleration,false
+Blood Pet,1,ramp,false
+Blood Vassal,1.5,ramp,false
+Boggart Trawler,0,mdfc_land,true
+Bojuka Bog,0,land,true
+Bontu's Monument,1.5,discount,false
+Cabal Coffers,1,conditional_mana,true
+Cabal Stronghold,0.5,conditional_mana,true
+Castle Locthwain,0,land,true
+Command Beacon,0,land,true
+Crypt Ghast,2,big_mana,false
+Everflowing Chalice,1.5,mana_rock,false
+Extraplanar Lens,2,big_mana,false
+Fell the Profane,0,mdfc_land,true
+Fellwar Stone,2,mana_rock,false
+Hagra Mauling,0,mdfc_land,true
+Heartless Summoning,3,premium_acceleration,false
+High Market,0,land,true
+Jet Medallion,2,discount,false
+K'rrik, Son of Yawgmoth,2,accelerator,false
+Malakir Rebirth,0,mdfc_land,true
+Mana Vault,3,premium_acceleration,false
+Nirkana Revenant,1,big_mana,false
+Nykthos, Shrine to Nyx,1,conditional_mana,true
+Phyrexian Tower,0,land,true
+Snow-Covered Swamp,0,land,true
+Sol Ring,3,premium_acceleration,false
+Susur Secundi, Void Altar,0,land,true
+The Sibsig Ceremony,2,discount,false
+The Soul Stone,2,mana_rock,false
+Thran Dynamo,2,mana_rock,false
+Urborg, Tomb of Yawgmoth,0,land,true
+Urza's Cave,0,land,true
+Worn Powerstone,1.5,mana_rock,false
