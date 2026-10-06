@@ -1,0 +1,9 @@
+card_name,weight,type,is_land
+Swamp,0,land,true
+Sol Ring,3,premium_acceleration,false
+Mana Vault,3,premium_acceleration,false
+Ancient Tomb,3,premium_acceleration,true
+Heartless Summoning,3,discount,false
+Arcane Signet,2,mana_rock,false
+Fellwar Stone,2,mana_rock,false
+Mind Stone,2,mana_rock,false
