@@ -1,0 +1,10 @@
+# Replace this example with your own deck.
+# Format: quantity card name
+1 Sol Ring
+1 Mana Vault
+1 Ancient Tomb
+1 Heartless Summoning
+1 Arcane Signet
+1 Fellwar Stone
+1 Mind Stone
+92 Swamp
