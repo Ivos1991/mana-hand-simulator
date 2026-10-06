@@ -12,10 +12,11 @@ class HandTier(str, Enum):
 
 
 @dataclass(frozen=True)
-class WeightedCard:
+class CardConfig:
     name: str
     weight: float
     category: str
+    is_land: bool = False
 
 
 @dataclass(frozen=True)
