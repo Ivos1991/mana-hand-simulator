@@ -2,40 +2,26 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .models import HandEvaluation, HandTier, WeightedCard
-
-
-def is_land(card_name: str) -> bool:
-    normalized = card_name.casefold()
-    land_tokens = (
-        "swamp",
-        "island",
-        "forest",
-        "mountain",
-        "plains",
-        "tomb",
-        "coffers",
-        "nykthos",
-        "stronghold",
-        "bog",
-        "castle",
-        "tower",
-        "cave",
-        "beacon",
-        "market",
-    )
-    return any(token in normalized for token in land_tokens)
+from .models import CardConfig, HandEvaluation, HandTier
 
 
 def evaluate_hand(
     hand: Iterable[str],
-    weights: dict[str, WeightedCard],
+    card_config: dict[str, CardConfig],
 ) -> HandEvaluation:
     cards = tuple(hand)
-    lands = sum(1 for card in cards if is_land(card))
+    lands = sum(
+        1
+        for card in cards
+        if card in card_config and card_config[card].is_land
+    )
 
-    scored_cards = tuple(card for card in cards if card in weights)
-    score = sum(weights[card].weight for card in scored_cards)
+    scored_cards = tuple(
+        card
+        for card in cards
+        if card in card_config and card_config[card].weight > 0
+    )
+    score = sum(card_config[card].weight for card in scored_cards)
 
     tier = classify_hand(lands=lands, score=score)
 
@@ -48,7 +34,7 @@ def evaluate_hand(
 
 
 def classify_hand(*, lands: int, score: float) -> HandTier:
-    """Default heuristic. Edit this module to change tier semantics."""
+    """Default A/B/C/D heuristic for opening-hand quality."""
     if lands < 2 or lands > 5:
         return HandTier.D
 
