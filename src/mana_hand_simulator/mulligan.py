@@ -4,7 +4,7 @@ import random
 from collections.abc import Sequence
 
 from .hand_evaluator import evaluate_hand
-from .models import HandEvaluation, HandTier, WeightedCard
+from .models import CardConfig, HandEvaluation, HandTier
 
 
 KEEP_TIERS = {HandTier.A, HandTier.B}
@@ -18,7 +18,7 @@ def draw_hand(deck: Sequence[str], size: int, rng: random.Random) -> list[str]:
 
 def choose_london_six(
     hand: Sequence[str],
-    weights: dict[str, WeightedCard],
+    card_config: dict[str, CardConfig],
 ) -> list[str]:
     """Choose the best six-card subset from a seven-card London mulligan hand."""
     if len(hand) != 7:
@@ -28,7 +28,7 @@ def choose_london_six(
 
     for index in range(7):
         candidate = list(hand[:index]) + list(hand[index + 1 :])
-        evaluation = evaluate_hand(candidate, weights)
+        evaluation = evaluate_hand(candidate, card_config)
         tier_rank = {
             HandTier.A: 4,
             HandTier.B: 3,
@@ -44,17 +44,17 @@ def choose_london_six(
 
 def simulate_mulligan_sequence(
     deck: Sequence[str],
-    weights: dict[str, WeightedCard],
+    card_config: dict[str, CardConfig],
     rng: random.Random,
 ) -> tuple[HandEvaluation, HandEvaluation, HandEvaluation]:
     opening = draw_hand(deck, 7, rng)
-    opening_eval = evaluate_hand(opening, weights)
+    opening_eval = evaluate_hand(opening, card_config)
 
     free = draw_hand(deck, 7, rng)
-    free_eval = evaluate_hand(free, weights)
+    free_eval = evaluate_hand(free, card_config)
 
     london_seven = draw_hand(deck, 7, rng)
-    london_six = choose_london_six(london_seven, weights)
-    london_eval = evaluate_hand(london_six, weights)
+    london_six = choose_london_six(london_seven, card_config)
+    london_eval = evaluate_hand(london_six, card_config)
 
     return opening_eval, free_eval, london_eval
