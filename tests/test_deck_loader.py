@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mana_hand_simulator.deck_loader import load_deck, load_weights
+from mana_hand_simulator.deck_loader import load_card_config, load_deck
 
 
 def test_load_deck(tmp_path: Path) -> None:
@@ -10,14 +10,17 @@ def test_load_deck(tmp_path: Path) -> None:
     assert load_deck(path) == ["Swamp", "Swamp", "Sol Ring"]
 
 
-def test_load_weights(tmp_path: Path) -> None:
-    path = tmp_path / "weights.csv"
+def test_load_card_config(tmp_path: Path) -> None:
+    path = tmp_path / "config.csv"
     path.write_text(
-        "card_name,weight,type\nSol Ring,3,premium_acceleration\n",
+        "card_name,weight,type,is_land\n"
+        "Swamp,0,land,true\n"
+        "Sol Ring,3,premium_acceleration,false\n",
         encoding="utf-8",
     )
 
-    weights = load_weights(path)
+    config = load_card_config(path)
 
-    assert weights["Sol Ring"].weight == 3
-    assert weights["Sol Ring"].category == "premium_acceleration"
+    assert config["Sol Ring"].weight == 3
+    assert config["Sol Ring"].category == "premium_acceleration"
+    assert config["Swamp"].is_land is True
