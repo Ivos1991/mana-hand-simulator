@@ -4,7 +4,7 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from .deck_loader import load_deck, load_weights
+from .deck_loader import load_card_config, load_deck
 from .models import HandEvaluation, SimulationResult
 from .mulligan import KEEP_TIERS, simulate_mulligan_sequence
 from .statistics import summarize
@@ -20,7 +20,7 @@ class MulliganSimulation:
 
 def run_simulation(
     deck_path: str | Path,
-    weights_path: str | Path,
+    config_path: str | Path,
     *,
     iterations: int = 100_000,
     seed: int | None = None,
@@ -29,7 +29,7 @@ def run_simulation(
         raise ValueError("iterations must be greater than zero.")
 
     deck = load_deck(deck_path)
-    weights = load_weights(weights_path)
+    card_config = load_card_config(config_path)
     rng = random.Random(seed)
 
     opening_evals: list[HandEvaluation] = []
@@ -39,7 +39,9 @@ def run_simulation(
     seen_ab_after_free = 0
 
     for _ in range(iterations):
-        opening, free, london = simulate_mulligan_sequence(deck, weights, rng)
+        opening, free, london = simulate_mulligan_sequence(
+            deck, card_config, rng
+        )
 
         opening_evals.append(opening)
         free_evals.append(free)
