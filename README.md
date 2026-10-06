@@ -1,23 +1,99 @@
 # Mana Hand Simulator
 
-Configurable Monte Carlo simulator for MTG Commander opening hands and mulligans.
+A configurable Monte Carlo simulator for evaluating MTG Commander opening hands and mulligan decisions.
 
-## Quick start
+## How it works
+
+Each simulated hand is evaluated using two inputs:
+
+- **Land count** — cards marked `is_land=true` in `card_config.csv`.
+- **Acceleration score** — the sum of the weights of scored cards in the hand.
+
+Example:
+
+```csv
+card_name,weight,type,is_land
+Swamp,0,land,true
+Sol Ring,3,premium_acceleration,false
+Arcane Signet,2,mana_rock,false
+Blood Pet,1,ramp,false
+```
+
+A hand with 3 lands, `Sol Ring`, and `Blood Pet` has an acceleration score of **4**.
+
+## Hand ratings
+
+| Tier | Criteria |
+|---|---|
+| **A — Explosive** | 2–3 lands and score **5+** |
+| **B — Strong** | 2–4 lands and score **3+** |
+| **C — Keepable** | 2–4 lands and score **1+** |
+| **D — Mulligan** | Fewer than 2 lands, more than 5 lands, or insufficient acceleration |
+
+The simulator treats **A/B hands as keeps**.
+
+## Mulligan simulation
+
+For every iteration it simulates:
+
+1. **Opening 7**
+2. If not A/B → **free Commander mulligan to 7**
+3. If still not A/B → **London mulligan to 6**
+
+For the London mulligan, all seven possible cards to bottom are evaluated and the simulator keeps the best six-card hand based on:
+
+1. Hand tier
+2. Acceleration score
+3. Land count closest to 3
+
+The final output shows the percentage of **A / B / C / D** hands at each stage and the overall **A/B keep rate**.
+
+## Use your own deck
+
+Put your deck in:
+
+`data/decklist.txt`
+
+```text
+36 Swamp
+1 Sol Ring
+1 Arcane Signet
+...
+```
+
+Configure relevant cards in:
+
+`data/card_config.csv`
+
+```csv
+card_name,weight,type,is_land
+Swamp,0,land,true
+Sol Ring,3,premium_acceleration,false
+Arcane Signet,2,mana_rock,false
+```
+
+Cards that do not affect land count or acceleration do not need a config entry.
+
+## Run
 
 ```bash
 pip install -e .
 mana-hand-simulator --iterations 100000
 ```
 
-Edit:
-- `data/decklist.txt` — deck contents
-- `data/card_config.csv` — land flags, card weights, and categories
+Optional deterministic run:
 
-The simulator reports A/B/C/D hand-quality percentages for the opening seven, free mulligan, and London mulligan to six. Deck data stays outside the Python code so different decks can reuse the same engine.
+```bash
+mana-hand-simulator --iterations 100000 --seed 42
+```
 
-## Example
+## Avacyn example
 
-The exact Avacyn deck data and acceleration weights used while developing the simulator are in `examples/avacyn-angel-of-horror/`.
+The exact deck and weights used while developing the simulator are included in:
+
+`examples/avacyn-angel-of-horror/`
+
+Run the 1,000,000-hand simulation with:
 
 ```bash
 mana-hand-simulator \
