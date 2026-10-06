@@ -11,7 +11,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Simulate opening hands and mulligans for a configurable MTG deck."
     )
     parser.add_argument("--deck", default="data/decklist.txt")
-    parser.add_argument("--weights", default="data/card_weights.csv")
+    parser.add_argument("--config", default="data/card_config.csv")
     parser.add_argument("--iterations", type=int, default=100_000)
     parser.add_argument("--seed", type=int)
     return parser
@@ -22,7 +22,7 @@ def main() -> None:
 
     result = run_simulation(
         args.deck,
-        args.weights,
+        args.config,
         iterations=args.iterations,
         seed=args.seed,
     )
