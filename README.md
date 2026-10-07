@@ -4,77 +4,34 @@ A configurable Monte Carlo simulator for evaluating MTG Commander opening hands 
 
 ## How it works
 
-Each simulated hand is evaluated using two inputs:
+Each simulated hand is evaluated using:
 
-- **Land count** — cards marked `is_land=true` in `card_config.csv`.
-- **Acceleration score** — the sum of the weights of scored cards in the hand.
-
-Example:
-
-```csv
-card_name,weight,type,is_land
-Swamp,0,land,true
-Sol Ring,3,premium_acceleration,false
-Arcane Signet,2,mana_rock,false
-Blood Pet,1,ramp,false
-```
-
-A hand with 3 lands, `Sol Ring`, and `Blood Pet` has an acceleration score of **4**.
-
-## Hand ratings
+- **Land count** — cards marked `is_land=true`
+- **Acceleration score** — the sum of the configured card weights
 
 | Tier | Criteria |
 |---|---|
 | **A — Explosive** | 2–3 lands and score **5+** |
 | **B — Strong** | 2–4 lands and score **3+** |
 | **C — Keepable** | 2–4 lands and score **1+** |
-| **D — Mulligan** | Fewer than 2 lands, more than 5 lands, or insufficient acceleration |
+| **D — Mulligan** | Too few/many lands or insufficient acceleration |
 
-The simulator treats **A/B hands as keeps**.
+**A/B hands are keeps.** The simulator tests the opening 7, a free Commander mulligan to 7, and then a London mulligan to 6. For the London mulligan it evaluates every possible card to bottom and chooses the best six by tier, score, then land count closest to 3.
 
-## Mulligan simulation
+## Web app
 
-For every iteration it simulates:
+The Streamlit UI lets you paste/upload a decklist, edit card weights and land flags, choose the number of iterations, and run the simulation in your browser.
 
-1. **Opening 7**
-2. If not A/B → **free Commander mulligan to 7**
-3. If still not A/B → **London mulligan to 6**
+Run locally:
 
-For the London mulligan, all seven possible cards to bottom are evaluated and the simulator keeps the best six-card hand based on:
-
-1. Hand tier
-2. Acceleration score
-3. Land count closest to 3
-
-The final output shows the percentage of **A / B / C / D** hands at each stage and the overall **A/B keep rate**.
-
-## Use your own deck
-
-Put your deck in:
-
-`data/decklist.txt`
-
-```text
-36 Swamp
-1 Sol Ring
-1 Arcane Signet
-...
+```bash
+pip install -e .
+streamlit run app.py
 ```
 
-Configure relevant cards in:
+To deploy for free on **Streamlit Community Cloud**, connect this GitHub repo and use `app.py` as the entrypoint.
 
-`data/card_config.csv`
-
-```csv
-card_name,weight,type,is_land
-Swamp,0,land,true
-Sol Ring,3,premium_acceleration,false
-Arcane Signet,2,mana_rock,false
-```
-
-Cards that do not affect land count or acceleration do not need a config entry.
-
-## Run
+## CLI
 
 ```bash
 pip install -e .
@@ -87,20 +44,25 @@ Optional deterministic run:
 mana-hand-simulator --iterations 100000 --seed 42
 ```
 
-## Avacyn example
+## Data
 
-The exact Avacyn deck and complete per-card configuration used while developing the simulator are included in:
+- `data/decklist.txt` — default decklist
+- `data/card_config.csv` — card weights, categories, and land flags
+- `examples/avacyn-angel-of-horror/` — preserved Avacyn example data
 
-- `examples/avacyn-angel-of-horror/decklist.txt` — full 99-card library
-- `examples/avacyn-angel-of-horror/card_config.csv` — every card, with land flags and the exact acceleration weights used
+Deck format:
 
-The files under `data/` are only a small generic starter example.
+```text
+36 Swamp
+1 Sol Ring
+1 Arcane Signet
+```
 
-Run the 1,000,000-hand simulation with:
+Config format:
 
-```bash
-mana-hand-simulator \
-  --deck examples/avacyn-angel-of-horror/decklist.txt \
-  --config examples/avacyn-angel-of-horror/card_config.csv \
-  --iterations 1000000
+```csv
+card_name,weight,type,is_land
+Swamp,0,land,true
+Sol Ring,3,premium_acceleration,false
+Arcane Signet,2,mana_rock,false
 ```
