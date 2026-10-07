@@ -42,12 +42,35 @@ def summarize(
         else 100.0
     )
 
+    average_score = (
+        sum(evaluation.score for evaluation in evaluations) / len(evaluations)
+        if evaluations
+        else 0.0
+    )
+    low_land_rate = (
+        sum(evaluation.lands < 2 for evaluation in evaluations)
+        * 100
+        / len(evaluations)
+        if evaluations
+        else 0.0
+    )
+    high_land_rate = (
+        sum(evaluation.lands > 4 for evaluation in evaluations)
+        * 100
+        / len(evaluations)
+        if evaluations
+        else 0.0
+    )
+
     return SimulationResult(
         total=len(evaluations),
         counts={tier: counts.get(tier, 0) for tier in HandTier},
         average_color_coverage=average_color_coverage,
         color_access_rates=color_access_rates,
         full_color_access_rate=full_color_access_rate,
+        average_score=average_score,
+        low_land_rate=low_land_rate,
+        high_land_rate=high_land_rate,
     )
 
 
