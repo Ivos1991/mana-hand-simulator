@@ -13,7 +13,10 @@ from mana_hand_simulator.models import CardConfig, HandTier
 from mana_hand_simulator.scryfall import (
     calculate_card_color_distribution,
     card_image_url,
+    deck_summary,
     fetch_cards,
+    is_land_card,
+    is_mdfc_land,
     produced_mana,
 )
 from mana_hand_simulator.simulator import run_simulation_from_data
@@ -139,14 +142,18 @@ def enrich_config_from_scryfall(
         if not card:
             continue
 
-        type_line = str(card.get("type_line", ""))
-        is_land = "Land" in type_line
+        is_land = is_land_card(card)
+        is_mdfc = is_mdfc_land(card)
         produces = produced_mana(card)
 
         if name in by_name:
             index = by_name[name]
             if is_land:
                 frame.at[index, "is_land"] = True
+            if is_mdfc and str(frame.at[index, "type"]).strip() in {"", "unscored"}:
+                frame.at[index, "type"] = "mdfc_land"
+            elif is_land and str(frame.at[index, "type"]).strip() in {"", "unscored"}:
+                frame.at[index, "type"] = "land"
             if produces:
                 frame.at[index, "produces"] = produces
         else:
@@ -154,7 +161,7 @@ def enrich_config_from_scryfall(
                 {
                     "card_name": name,
                     "weight": 0.0,
-                    "type": "land" if is_land else "unscored",
+                    "type": "mdfc_land" if is_mdfc else ("land" if is_land else "unscored"),
                     "is_land": is_land,
                     "produces": produces,
                 }
@@ -264,7 +271,7 @@ with st.container(border=True):
         )
     with note_col:
         st.caption(
-            "Multicolor cards are split evenly across their colors; lands are excluded from demand."
+            "Auto-detect now uses actual colored mana pips from casting costs; lands are excluded from demand."
         )
 
     if auto_detect:
@@ -285,6 +292,7 @@ with st.container(border=True):
                 base_frame, parsed_deck, scryfall_cards
             )
             st.session_state["scryfall_cards"] = scryfall_cards
+            st.session_state["deck_summary"] = deck_summary(parsed_deck, scryfall_cards)
             st.session_state["config_editor_version"] += 1
 
             if missing:
@@ -325,6 +333,52 @@ with st.container(border=True):
             "Scryfall could not match: " + ", ".join(missing[:10])
             + ("…" if len(missing) > 10 else "")
         )
+
+    summary = st.session_state.get("deck_summary")
+    if summary:
+        st.markdown("#### Deck Analysis")
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Deck size", summary["deck_size"])
+        m2.metric("Land-capable cards", summary["land_count"])
+        m3.metric("Average mana value", f'{summary["average_mana_value"]:.2f}')
+        m4.metric("Color identity", summary["color_identity"])
+
+        if summary["mdfc_land_count"]:
+            st.caption(
+                f'Includes {summary["mdfc_land_count"]} modal double-faced land card(s).'
+            )
+
+        analysis_left, analysis_right = st.columns(2)
+
+        with analysis_left:
+            st.markdown("**Mana Curve**")
+            curve_frame = pd.DataFrame(
+                {
+                    "Mana value": list(summary["curve"].keys()),
+                    "Cards": list(summary["curve"].values()),
+                }
+            ).set_index("Mana value")
+            st.bar_chart(curve_frame)
+
+        with analysis_right:
+            st.markdown("**Card Types**")
+            type_frame = pd.DataFrame(
+                {
+                    "Type": list(summary["type_counts"].keys()),
+                    "Cards": list(summary["type_counts"].values()),
+                }
+            ).set_index("Type")
+            st.bar_chart(type_frame)
+
+        illegal = summary["commander_illegal"]
+        if illegal:
+            st.warning(
+                "Not currently marked Commander-legal by Scryfall: "
+                + ", ".join(illegal)
+            )
+        else:
+            st.success("All matched cards are marked Commander-legal by Scryfall.")
 
 st.subheader("4. Card Configuration")
 uploaded_config = st.file_uploader(
