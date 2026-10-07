@@ -12,7 +12,7 @@ TIER_D = 0
 TIER_C = 1
 TIER_B = 2
 TIER_A = 3
-BATCH_SIZE = 20_000
+BATCH_SIZE = 100_000
 
 
 @dataclass(frozen=True)
