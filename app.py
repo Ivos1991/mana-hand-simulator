@@ -387,31 +387,34 @@ class CardImageTooltip {
 
 mana_renderer = JsCode(
     """
-function(params) {
-  const value = params.value || '';
+class ManaSymbolRenderer {
+  init(params) {
+    this.eGui = document.createElement('div');
+    this.eGui.style.display = 'flex';
+    this.eGui.style.alignItems = 'center';
+    this.eGui.style.gap = '4px';
+    this.eGui.style.height = '100%';
 
-  const container = document.createElement('div');
-  container.style.display = 'flex';
-  container.style.alignItems = 'center';
-  container.style.gap = '4px';
-  container.style.height = '100%';
-
-  if (!value) {
-    return container;
+    const value = params.value || '';
+    Array.from(value).forEach(symbol => {
+      const img = document.createElement('img');
+      img.src = 'https://svgs.scryfall.io/card-symbols/' + symbol + '.svg';
+      img.alt = symbol;
+      img.title = symbol;
+      img.style.width = '22px';
+      img.style.height = '22px';
+      img.style.display = 'block';
+      this.eGui.appendChild(img);
+    });
   }
 
-  Array.from(value).forEach(symbol => {
-    const img = document.createElement('img');
-    img.src = 'https://svgs.scryfall.io/card-symbols/' + symbol + '.svg';
-    img.alt = symbol;
-    img.title = symbol;
-    img.style.width = '22px';
-    img.style.height = '22px';
-    img.style.display = 'block';
-    container.appendChild(img);
-  });
+  getGui() {
+    return this.eGui;
+  }
 
-  return container;
+  refresh(params) {
+    return false;
+  }
 }
 """
 )
