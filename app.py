@@ -8,12 +8,71 @@ import streamlit as st
 
 from mana_hand_simulator.deck_loader import parse_deck_text
 from mana_hand_simulator.models import CardConfig, HandTier
+from mana_hand_simulator.scryfall import (
+    calculate_card_color_distribution,
+    card_image_url,
+    fetch_cards,
+    produced_mana,
+)
 from mana_hand_simulator.simulator import run_simulation_from_data
 
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DECK = ROOT / "data" / "decklist.txt"
 DEFAULT_CONFIG = ROOT / "data" / "card_config.csv"
+COLORS = ("W", "U", "B", "R", "G", "C")
+COLOR_NAMES = {
+    "W": "White",
+    "U": "Blue",
+    "B": "Black",
+    "R": "Red",
+    "G": "Green",
+    "C": "Colorless",
+}
+MANA_SYMBOLS = {
+    color: f"https://svgs.scryfall.io/card-symbols/{color}.svg"
+    for color in COLORS
+}
+PRODUCES_OPTIONS = [
+    "",
+    "C",
+    "W",
+    "U",
+    "B",
+    "R",
+    "G",
+    "WU",
+    "WB",
+    "WR",
+    "WG",
+    "UB",
+    "UR",
+    "UG",
+    "BR",
+    "BG",
+    "RG",
+    "WUB",
+    "WUR",
+    "WUG",
+    "WBR",
+    "WBG",
+    "WRG",
+    "UBR",
+    "UBG",
+    "URG",
+    "BRG",
+    "WUBR",
+    "WUBG",
+    "WURG",
+    "WBRG",
+    "UBRG",
+    "WUBRG",
+]
+
+
+@st.cache_data(ttl=86_400, show_spinner=False)
+def cached_scryfall_lookup(card_names: tuple[str, ...]):
+    return fetch_cards(list(card_names))
 
 
 def load_default_deck() -> str:
@@ -21,13 +80,24 @@ def load_default_deck() -> str:
 
 
 def load_default_config() -> pd.DataFrame:
-    return pd.read_csv(DEFAULT_CONFIG)
+    frame = pd.read_csv(DEFAULT_CONFIG)
+    if "produces" not in frame.columns:
+        frame["produces"] = ""
+    return frame
+
+
+def ensure_config_shape(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
+    if "produces" not in frame.columns:
+        frame["produces"] = ""
+    frame["produces"] = frame["produces"].fillna("").astype(str)
+    return frame
 
 
 def dataframe_to_config(frame: pd.DataFrame) -> dict[str, CardConfig]:
     config: dict[str, CardConfig] = {}
 
-    required = {"card_name", "weight", "type", "is_land"}
+    required = {"card_name", "weight", "type", "is_land", "produces"}
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(
@@ -50,11 +120,16 @@ def dataframe_to_config(frame: pd.DataFrame) -> dict[str, CardConfig]:
                 "y",
             }
 
+        produces = str(row["produces"]).strip().upper()
+        if produces.lower() == "nan":
+            produces = ""
+
         config[name] = CardConfig(
             name=name,
             weight=float(row["weight"]),
             category=str(row["type"]).strip(),
             is_land=is_land,
+            produces=tuple(color for color in "WUBRGC" if color in produces),
         )
 
     return config
@@ -69,7 +144,54 @@ def percentages_row(label: str, result) -> dict[str, float | str]:
         "C": pct[HandTier.C],
         "D": pct[HandTier.D],
         "A/B Keep": pct[HandTier.A] + pct[HandTier.B],
+        "Avg color coverage": result.average_color_coverage * 100,
     }
+
+
+def enrich_config_from_scryfall(
+    frame: pd.DataFrame,
+    deck: list[str],
+    cards: dict[str, dict],
+) -> pd.DataFrame:
+    frame = ensure_config_shape(frame)
+    by_name = {
+        str(row["card_name"]).strip(): index
+        for index, row in frame.iterrows()
+        if str(row["card_name"]).strip()
+    }
+
+    rows_to_add: list[dict] = []
+
+    for name in dict.fromkeys(deck):
+        card = cards.get(name)
+        if not card:
+            continue
+
+        type_line = str(card.get("type_line", ""))
+        is_land = "Land" in type_line
+        produces = produced_mana(card)
+
+        if name in by_name:
+            index = by_name[name]
+            if is_land:
+                frame.at[index, "is_land"] = True
+            if produces:
+                frame.at[index, "produces"] = produces
+        else:
+            rows_to_add.append(
+                {
+                    "card_name": name,
+                    "weight": 0.0,
+                    "type": "land" if is_land else "unscored",
+                    "is_land": is_land,
+                    "produces": produces,
+                }
+            )
+
+    if rows_to_add:
+        frame = pd.concat([frame, pd.DataFrame(rows_to_add)], ignore_index=True)
+
+    return frame
 
 
 st.set_page_config(
@@ -78,27 +200,33 @@ st.set_page_config(
     layout="wide",
 )
 
+for color in COLORS:
+    st.session_state.setdefault(f"color_{color}", 100.0 if color == "B" else 0.0)
+st.session_state.setdefault("config_editor_version", 0)
+
 st.title("Mana Hand Simulator")
 st.caption(
-    "Monte Carlo opening-hand and mulligan analysis for MTG Commander decks."
+    "Monte Carlo opening-hand, mulligan, and color-access analysis for MTG Commander decks."
 )
 
 with st.expander("How scoring works", expanded=False):
     st.markdown(
         """
-Each hand is graded from its **land count** and the sum of its configured
-**acceleration weights**.
+Each hand is graded from **land count**, **acceleration score**, and — when a
+color distribution is supplied — **color coverage**.
 
-| Tier | Default criteria |
+| Tier | Base criteria |
 |---|---|
 | **A — Explosive** | 2–3 lands and score ≥ 5 |
 | **B — Strong** | 2–4 lands and score ≥ 3 |
 | **C — Keepable** | 2–4 lands and score ≥ 1 |
 | **D — Mulligan** | Too few/many lands or insufficient acceleration |
 
-The simulator keeps **A/B** hands. If the opening seven is not A/B, it takes
-the free Commander mulligan. If that also fails, it performs a London
-mulligan and evaluates every possible six-card hand after bottoming one card.
+Color-starved hands are capped to a lower tier. The simulator keeps **A/B**
+hands, then tries the free Commander mulligan, then a London mulligan to six.
+
+**Colorless** in the distribution means cards with no colored casting
+requirement. It does not mean the deck literally requires {C} mana.
 """
     )
 
@@ -143,23 +271,124 @@ with settings_col:
         "Higher iteration counts reduce Monte Carlo noise but take longer to run."
     )
 
-st.subheader("3. Card configuration")
+try:
+    parsed_deck = parse_deck_text(deck_text)
+except Exception:
+    parsed_deck = []
+
+with st.container(border=True):
+    st.subheader("3. Deck Color Distribution")
+    st.caption(
+        "Set these manually, or let Scryfall calculate them from the nonland cards in your deck."
+    )
+
+    auto_col, note_col = st.columns([1, 3])
+    with auto_col:
+        auto_detect = st.button(
+            "Detect with Scryfall",
+            type="secondary",
+            disabled=not parsed_deck,
+            width="stretch",
+        )
+    with note_col:
+        st.caption(
+            "Multicolor cards are split evenly across their colors; lands are excluded from demand."
+        )
+
+    if auto_detect:
+        try:
+            with st.spinner("Looking up cards on Scryfall..."):
+                scryfall_cards, missing = cached_scryfall_lookup(
+                    tuple(dict.fromkeys(parsed_deck))
+                )
+                distribution = calculate_card_color_distribution(
+                    parsed_deck, scryfall_cards
+                )
+
+            for color in COLORS:
+                st.session_state[f"color_{color}"] = float(distribution[color])
+
+            base_frame = st.session_state.get("config_frame", load_default_config())
+            st.session_state["config_frame"] = enrich_config_from_scryfall(
+                base_frame, parsed_deck, scryfall_cards
+            )
+            st.session_state["scryfall_cards"] = scryfall_cards
+            st.session_state["config_editor_version"] += 1
+
+            if missing:
+                st.session_state["scryfall_missing"] = missing
+            else:
+                st.session_state.pop("scryfall_missing", None)
+
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+    color_columns = st.columns(6)
+    for column, color in zip(color_columns, COLORS):
+        with column:
+            st.markdown(
+                f'<div style="text-align:center"><img src="{MANA_SYMBOLS[color]}" '
+                f'width="30"><br><strong>{COLOR_NAMES[color]}</strong></div>',
+                unsafe_allow_html=True,
+            )
+            st.number_input(
+                f"{COLOR_NAMES[color]} %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                key=f"color_{color}",
+                label_visibility="collapsed",
+            )
+
+    color_total = sum(float(st.session_state[f"color_{color}"]) for color in COLORS)
+    if abs(color_total - 100.0) <= 0.11:
+        st.success(f"Total: {color_total:.1f}%")
+    else:
+        st.warning(f"Total: {color_total:.1f}% — adjust the values to 100%.")
+
+    if st.session_state.get("scryfall_missing"):
+        missing = st.session_state["scryfall_missing"]
+        st.warning(
+            "Scryfall could not match: " + ", ".join(missing[:10])
+            + ("…" if len(missing) > 10 else "")
+        )
+
+    scryfall_cards = st.session_state.get("scryfall_cards", {})
+    if scryfall_cards:
+        with st.expander("Card image preview"):
+            preview_name = st.selectbox(
+                "Card",
+                options=list(scryfall_cards.keys()),
+                label_visibility="collapsed",
+            )
+            image_url = card_image_url(scryfall_cards[preview_name])
+            if image_url:
+                st.image(image_url, width=260)
+
+st.subheader("4. Card Configuration")
 uploaded_config = st.file_uploader(
     "Upload card config (.csv)",
     type=["csv"],
-    help="Columns: card_name, weight, type, is_land",
+    help="Columns: card_name, weight, type, is_land, produces",
 )
 
 if uploaded_config is not None:
-    config_frame = pd.read_csv(StringIO(uploaded_config.getvalue().decode("utf-8")))
-else:
-    config_frame = load_default_config()
+    config_frame = ensure_config_shape(
+        pd.read_csv(StringIO(uploaded_config.getvalue().decode("utf-8")))
+    )
+    st.session_state["config_frame"] = config_frame
+elif "config_frame" not in st.session_state:
+    st.session_state["config_frame"] = load_default_config()
+
+config_frame = ensure_config_shape(st.session_state["config_frame"])
 
 edited_config = st.data_editor(
     config_frame,
     width="stretch",
     hide_index=True,
     num_rows="dynamic",
+    key=f"config_editor_{st.session_state['config_editor_version']}",
     column_config={
         "card_name": st.column_config.TextColumn("Card", required=True),
         "weight": st.column_config.NumberColumn(
@@ -167,11 +396,17 @@ edited_config = st.data_editor(
         ),
         "type": st.column_config.TextColumn("Type"),
         "is_land": st.column_config.CheckboxColumn("Land"),
+        "produces": st.column_config.SelectboxColumn(
+            "Produces",
+            options=PRODUCES_OPTIONS,
+            help="Mana colors this card can produce.",
+        ),
     },
 )
+st.session_state["config_frame"] = edited_config
 
 st.caption(
-    "Weight 0 = unscored. Mark lands/MDFCs with Land so they count toward the hand's land total."
+    "Weight 0 = unscored. 'Produces' is used for color coverage; Scryfall can prefill many mana sources automatically."
 )
 
 if st.button("Run simulation", type="primary", width="stretch"):
@@ -179,11 +414,19 @@ if st.button("Run simulation", type="primary", width="stretch"):
         deck = parse_deck_text(deck_text)
         card_config = dataframe_to_config(edited_config)
 
+        if abs(color_total - 100.0) > 0.11:
+            raise ValueError("Deck Color Distribution must total 100%.")
+
+        color_demand = {
+            color: float(st.session_state[f"color_{color}"])
+            for color in COLORS
+        }
+
         unconfigured = sorted(set(deck) - set(card_config))
         if unconfigured:
             st.warning(
                 f"{len(unconfigured)} card name(s) are not in the config. "
-                "They will count as nonland, weight-0 cards."
+                "They will count as nonland, weight-0 cards with no mana production."
             )
 
         with st.spinner(f"Simulating {iterations:,} mulligan sequences..."):
@@ -192,6 +435,7 @@ if st.button("Run simulation", type="primary", width="stretch"):
                 card_config,
                 iterations=iterations,
                 seed=int(seed) if use_seed else None,
+                color_demand=color_demand,
             )
 
         rows = [
@@ -203,7 +447,7 @@ if st.button("Run simulation", type="primary", width="stretch"):
 
         st.subheader("Results")
 
-        metric1, metric2, metric3 = st.columns(3)
+        metric1, metric2, metric3, metric4 = st.columns(4)
         opening_keep = results.loc[0, "A/B Keep"]
         final_keep = results.loc[2, "A/B Keep"]
 
@@ -213,9 +457,13 @@ if st.button("Run simulation", type="primary", width="stretch"):
             f"{result.seen_ab_after_free_mulligan:.1f}%",
         )
         metric3.metric("Final A/B", f"{final_keep:.1f}%")
+        metric4.metric(
+            "Opening color coverage",
+            f"{result.opening.average_color_coverage * 100:.1f}%",
+        )
 
         formatted = results.copy()
-        for column in ["A", "B", "C", "D", "A/B Keep"]:
+        for column in ["A", "B", "C", "D", "A/B Keep", "Avg color coverage"]:
             formatted[column] = formatted[column].map(lambda value: f"{value:.2f}%")
         st.dataframe(formatted, hide_index=True, width="stretch")
 
@@ -229,6 +477,15 @@ if st.button("Run simulation", type="primary", width="stretch"):
             st.write(
                 "Seed: **"
                 + (str(int(seed)) if use_seed else "random")
+                + "**"
+            )
+            st.write(
+                "Color distribution: **"
+                + ", ".join(
+                    f"{color} {color_demand[color]:.1f}%"
+                    for color in COLORS
+                    if color_demand[color] > 0
+                )
                 + "**"
             )
 
