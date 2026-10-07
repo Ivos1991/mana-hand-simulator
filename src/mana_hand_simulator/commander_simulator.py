@@ -150,11 +150,37 @@ def _draw_order_batch(
     deck_size: int,
     draw_count: int,
 ) -> np.ndarray:
-    keys = rng.random((batch_size, deck_size), dtype=np.float32)
-    subset = np.argpartition(keys, draw_count - 1, axis=1)[:, :draw_count]
-    subset_keys = np.take_along_axis(keys, subset, axis=1)
-    order = np.argsort(subset_keys, axis=1)
-    return np.take_along_axis(subset, order, axis=1)
+    """Generate an ordered sample without replacement using sparse retries."""
+    if draw_count > deck_size:
+        raise ValueError("Draw count cannot exceed deck size.")
+
+    draws = np.empty((batch_size, draw_count), dtype=np.int16)
+
+    for column in range(draw_count):
+        candidate = rng.integers(
+            0, deck_size, size=batch_size, dtype=np.int16
+        )
+
+        if column:
+            duplicate = np.any(
+                draws[:, :column] == candidate[:, None],
+                axis=1,
+            )
+            while np.any(duplicate):
+                candidate[duplicate] = rng.integers(
+                    0,
+                    deck_size,
+                    size=int(np.count_nonzero(duplicate)),
+                    dtype=np.int16,
+                )
+                duplicate = np.any(
+                    draws[:, :column] == candidate[:, None],
+                    axis=1,
+                )
+
+        draws[:, column] = candidate
+
+    return draws
 
 
 def _selected_land_stats(
