@@ -81,3 +81,38 @@ def test_deck_summary_uses_existing_card_data() -> None:
     assert result["land_count"] == 1
     assert result["average_mana_value"] == 2.0
     assert result["color_identity"] == "B"
+
+
+def test_mdfc_summary_counts_both_land_and_spell_type() -> None:
+    deck = ["Malakir Rebirth"]
+    cards = {
+        "Malakir Rebirth": {
+            "name": "Malakir Rebirth // Malakir Mire",
+            "layout": "modal_dfc",
+            "type_line": "Instant // Land",
+            "cmc": 1,
+            "color_identity": ["B"],
+            "legalities": {"commander": "legal"},
+            "card_faces": [
+                {
+                    "name": "Malakir Rebirth",
+                    "type_line": "Instant",
+                    "mana_cost": "{B}",
+                    "image_uris": {"normal": "https://example.com/front.jpg"},
+                },
+                {
+                    "name": "Malakir Mire",
+                    "type_line": "Land",
+                    "mana_cost": "",
+                    "produced_mana": ["B"],
+                },
+            ],
+        }
+    }
+
+    result = deck_summary(deck, cards)
+
+    assert result["land_count"] == 1
+    assert result["mdfc_land_count"] == 1
+    assert result["type_counts"]["Land"] == 1
+    assert result["type_counts"]["Instant"] == 1
