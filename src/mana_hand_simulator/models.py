@@ -17,6 +17,7 @@ class CardConfig:
     weight: float
     category: str
     is_land: bool = False
+    produces: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -25,12 +26,14 @@ class HandEvaluation:
     score: float
     lands: int
     weighted_cards: tuple[str, ...]
+    color_coverage: float = 1.0
 
 
 @dataclass(frozen=True)
 class SimulationResult:
     total: int
     counts: dict[HandTier, int]
+    average_color_coverage: float = 1.0
 
     def percentages(self) -> dict[HandTier, float]:
         if self.total == 0:
