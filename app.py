@@ -44,6 +44,31 @@ PRODUCES_OPTIONS = [""] + [
     for combo in combinations("WUBRGC", size)
 ]
 
+CATEGORY_OPTIONS = [
+    "Other / Unscored",
+    "Land",
+    "MDFC Land",
+    "Mana Rock",
+    "Ramp / Accelerator",
+    "Cost Discount",
+    "Big Mana",
+    "Conditional Mana",
+    "Premium Acceleration",
+]
+CATEGORY_ALIASES = {
+    "unscored": "Other / Unscored",
+    "Land": "Land",
+    "MDFC Land": "MDFC Land",
+    "mana_rock": "Mana Rock",
+    "ramp": "Ramp / Accelerator",
+    "acceleration": "Ramp / Accelerator",
+    "accelerator": "Ramp / Accelerator",
+    "discount": "Cost Discount",
+    "big_mana": "Big Mana",
+    "conditional_mana": "Conditional Mana",
+    "premium_acceleration": "Premium Acceleration",
+}
+
 
 SCRYFALL_CACHE_VERSION = "mdfc-v3"
 
@@ -72,7 +97,16 @@ def ensure_config_shape(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
     if "produces" not in frame.columns:
         frame["produces"] = ""
+    if "type" not in frame.columns:
+        frame["type"] = "Other / Unscored"
     frame["produces"] = frame["produces"].fillna("").astype(str)
+    frame["type"] = (
+        frame["type"]
+        .fillna("Other / Unscored")
+        .astype(str)
+        .map(lambda value: CATEGORY_ALIASES.get(value.strip(), value.strip()))
+    )
+    frame.loc[~frame["type"].isin(CATEGORY_OPTIONS), "type"] = "Other / Unscored"
     return frame
 
 
@@ -157,7 +191,7 @@ def enrich_config_from_scryfall(
             index = by_name[name]
             if is_land:
                 frame.at[index, "is_land"] = True
-            if is_mdfc and str(frame.at[index, "type"]).strip() in {"", "unscored"}:
+            if is_mdfc and str(frame.at[index, "type"]).strip() in {"", "Other / Unscored"}:
                 frame.at[index, "type"] = "mdfc_land"
             elif is_land and str(frame.at[index, "type"]).strip() in {"", "unscored"}:
                 frame.at[index, "type"] = "land"
@@ -195,24 +229,20 @@ st.caption(
     "Monte Carlo opening-hand, mulligan, and color-access analysis for MTG Commander decks."
 )
 
-with st.expander("How scoring works", expanded=False):
+with st.expander("Quick guide — what to set and what the results mean", expanded=True):
     st.markdown(
         """
-Each hand is graded from **land count**, **acceleration score**, and — when a
-color distribution is supplied — **color coverage**.
+**1. Paste your deck** → click **Detect with Scryfall** to fill colors, lands, mana production, curve, and card data.
 
-| Tier | Base criteria |
-|---|---|
-| **A — Explosive** | 2–3 lands and score ≥ 5 |
-| **B — Strong** | 2–4 lands and score ≥ 3 |
-| **C — Keepable** | 2–4 lands and score ≥ 1 |
-| **D — Mulligan** | Too few/many lands or insufficient acceleration |
+**2. Review Card Configuration**
+- **Category** = what kind of mana/setup card it is.
+- **Weight** = how valuable it is in an opening hand: **0** not acceleration, **1** small boost, **1.5–2** strong, **3** premium/explosive.
+- **Land** and **Produces** are usually filled automatically; adjust only if needed.
 
-Color-starved hands are capped to a lower tier. The simulator keeps **A/B**
-hands, then tries the free Commander mulligan, then a London mulligan to six.
+Use these categories: **Mana Rock**, **Ramp / Accelerator**, **Cost Discount**, **Big Mana**, **Conditional Mana**, **Premium Acceleration**, **Land/MDFC Land**, or **Other / Unscored**.
 
-**Colorless** in the distribution means cards with no colored casting
-requirement. It does not mean the deck literally requires {C} mana.
+**3. Read the result:** **A = explosive**, **B = strong keep**, **C = marginal/keepable**, **D = mulligan**.  
+**A/B Keep** is the main number to watch; **Color Coverage** shows how often your opening mana can support your deck's color needs.
 """
     )
 
@@ -245,17 +275,25 @@ with settings_col:
         options=[10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000],
         value=100_000,
     )
-    use_seed = st.checkbox("Use deterministic seed", value=False)
-    seed = st.number_input(
-        "Seed",
-        min_value=0,
-        value=42,
-        step=1,
-        disabled=not use_seed,
-    )
-    st.info(
-        "Higher iteration counts reduce Monte Carlo noise but take longer to run."
-    )
+    st.caption("More iterations = steadier percentages, but a slower run.")
+
+    with st.expander("Advanced: repeatable results"):
+        use_seed = st.checkbox(
+            "Use the same random sequence every run",
+            value=False,
+            help="Useful for testing changes: the same seed produces the same simulated hands.",
+        )
+        seed = st.number_input(
+            "Seed",
+            min_value=0,
+            value=42,
+            step=1,
+            disabled=not use_seed,
+            help="42 is only an arbitrary example seed. Any integer works.",
+        )
+        st.caption(
+            "Leave this off for normal use. Turn it on only when you want two runs to use the exact same random draws."
+        )
 
 try:
     parsed_deck = parse_deck_text(deck_text)
@@ -631,9 +669,11 @@ grid_options = {
             "cellEditorParams": {"min": 0, "step": 0.5},
         },
         {
-            "headerName": "Type",
+            "headerName": "Category",
             "field": "type",
-            "minWidth": 170,
+            "minWidth": 190,
+            "cellEditor": "agSelectCellEditor",
+            "cellEditorParams": {"values": CATEGORY_OPTIONS},
         },
         {
             "headerName": "Land",
@@ -679,7 +719,7 @@ edited_config = ensure_config_shape(edited_config)
 st.session_state["config_frame"] = edited_config
 
 st.caption(
-    "Weight 0 = unscored. 'Produces' is used for color coverage; Scryfall can prefill many mana sources automatically."
+    "Tip: most cards should stay Other / Unscored with weight 0. Only give weight to cards that genuinely improve an opening hand's mana/setup."
 )
 
 if st.button("Run simulation", type="primary", width="stretch"):
