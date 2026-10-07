@@ -5,17 +5,49 @@ from collections import Counter
 from .models import HandEvaluation, HandTier, SimulationResult
 
 
-def summarize(evaluations: list[HandEvaluation]) -> SimulationResult:
+def summarize(
+    evaluations: list[HandEvaluation],
+    color_demand: dict[str, float] | None = None,
+) -> SimulationResult:
     counts = Counter(evaluation.tier for evaluation in evaluations)
     average_color_coverage = (
         sum(evaluation.color_coverage for evaluation in evaluations) / len(evaluations)
         if evaluations
         else 1.0
     )
+
+    demanded_colors = [
+        color
+        for color in ("W", "U", "B", "R", "G")
+        if color_demand and float(color_demand.get(color, 0.0)) > 0
+    ]
+    color_access_rates = {
+        color: (
+            sum(color in evaluation.color_access for evaluation in evaluations)
+            * 100
+            / len(evaluations)
+            if evaluations
+            else 0.0
+        )
+        for color in demanded_colors
+    }
+    full_color_access_rate = (
+        sum(
+            all(color in evaluation.color_access for color in demanded_colors)
+            for evaluation in evaluations
+        )
+        * 100
+        / len(evaluations)
+        if evaluations and demanded_colors
+        else 100.0
+    )
+
     return SimulationResult(
         total=len(evaluations),
         counts={tier: counts.get(tier, 0) for tier in HandTier},
         average_color_coverage=average_color_coverage,
+        color_access_rates=color_access_rates,
+        full_color_access_rate=full_color_access_rate,
     )
 
 
