@@ -256,13 +256,43 @@ def draw_index_hands(
     deck_size: int,
     hand_size: int = 7,
 ) -> np.ndarray:
-    """Draw many independent hands without replacement inside each hand.
+    """Draw many ordered hands uniformly without replacement.
 
-    Random-key sampling moves the expensive inner loop into NumPy's compiled
-    argpartition implementation. Batching bounds memory even for 1M+ trials.
+    A vectorized rejection sampler generates only ~hand_size random integers
+    per hand instead of a full deck-sized random-key matrix. With Commander
+    decks (99 cards, 7-card hands), collision retries are rare and this cuts
+    both RNG work and peak memory dramatically.
     """
-    keys = rng.random((batch_size, deck_size), dtype=np.float32)
-    return np.argpartition(keys, hand_size - 1, axis=1)[:, :hand_size]
+    if hand_size > deck_size:
+        raise ValueError("Hand size cannot exceed deck size.")
+
+    hands = np.empty((batch_size, hand_size), dtype=np.int16)
+
+    for column in range(hand_size):
+        candidate = rng.integers(
+            0, deck_size, size=batch_size, dtype=np.int16
+        )
+
+        if column:
+            duplicate = np.any(
+                hands[:, :column] == candidate[:, None],
+                axis=1,
+            )
+            while np.any(duplicate):
+                candidate[duplicate] = rng.integers(
+                    0,
+                    deck_size,
+                    size=int(np.count_nonzero(duplicate)),
+                    dtype=np.int16,
+                )
+                duplicate = np.any(
+                    hands[:, :column] == candidate[:, None],
+                    axis=1,
+                )
+
+        hands[:, column] = candidate
+
+    return hands
 
 
 def choose_london_six_fast(
