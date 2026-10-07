@@ -24,6 +24,7 @@ def run_simulation_from_data(
     *,
     iterations: int = 100_000,
     seed: int | None = None,
+    color_demand: dict[str, float] | None = None,
 ) -> MulliganSimulation:
     if iterations <= 0:
         raise ValueError("iterations must be greater than zero.")
@@ -40,7 +41,7 @@ def run_simulation_from_data(
 
     for _ in range(iterations):
         opening, free, london = simulate_mulligan_sequence(
-            deck, card_config, rng
+            deck, card_config, rng, color_demand
         )
 
         opening_evals.append(opening)
@@ -72,10 +73,12 @@ def run_simulation(
     *,
     iterations: int = 100_000,
     seed: int | None = None,
+    color_demand: dict[str, float] | None = None,
 ) -> MulliganSimulation:
     return run_simulation_from_data(
         load_deck(deck_path),
         load_card_config(config_path),
         iterations=iterations,
         seed=seed,
+        color_demand=color_demand,
     )
