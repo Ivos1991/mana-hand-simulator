@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import random
 import re
 from dataclasses import dataclass
+
+import numpy as np
 
 from .models import CardConfig
 
 COLORS = ("W", "U", "B", "R", "G")
 MANA_SYMBOL_RE = re.compile(r"\{([^}]+)\}")
+COMMANDER_BATCH_SIZE = 50_000
 
 
 @dataclass(frozen=True)
@@ -42,8 +44,6 @@ def commander_requirements(card: dict) -> tuple[int, dict[str, int]]:
         parts = upper.split("/")
         present = [color for color in COLORS if color in parts]
         if present:
-            # For ordinary colored pips this is exact. Hybrid/Phyrexian symbols
-            # are intentionally conservative in this v1 estimator.
             for color in present:
                 colored[color] += 1
         elif upper == "X":
@@ -71,7 +71,11 @@ def _category_activation_turn(category: str) -> int:
 def _mana_bonus(config: CardConfig) -> int:
     if config.category == "Premium Acceleration":
         return 2
-    if config.category in {"Mana Rock", "Ramp / Accelerator", "Conditional Mana"}:
+    if config.category in {
+        "Mana Rock",
+        "Ramp / Accelerator",
+        "Conditional Mana",
+    }:
         return 1
     if config.category == "Big Mana":
         return 2
@@ -81,92 +85,136 @@ def _mana_bonus(config: CardConfig) -> int:
 def _discount_amount(config: CardConfig) -> int:
     if config.category != "Cost Discount":
         return 0
-    # The current weighting convention maps well enough for the known
-    # discounts: 1.5-2 ~= 1 mana, 3 ~= 2 mana.
     return max(1, int(round(config.weight / 2)))
 
 
-def _selected_lands(
-    drawn: list[str],
+@dataclass(frozen=True)
+class _PreparedCommanderDeck:
+    is_land: np.ndarray
+    colors: np.ndarray
+    activation_turn: np.ndarray
+    mana_bonus: np.ndarray
+    discount: np.ndarray
+    land_priority: np.ndarray
+
+
+def _prepare_commander_deck(
+    deck: list[str],
     card_config: dict[str, CardConfig],
-    land_slots: int,
-    demanded_colors: tuple[str, ...],
-) -> list[CardConfig]:
-    lands = [
-        card_config[name]
-        for name in drawn
-        if name in card_config and card_config[name].is_land
-    ]
-    lands.sort(
-        key=lambda config: (
-            sum(color in config.produces for color in demanded_colors),
-            len(config.produces),
-        ),
-        reverse=True,
-    )
-    return lands[:land_slots]
+    demanded_colors: np.ndarray,
+) -> _PreparedCommanderDeck:
+    size = len(deck)
+    is_land = np.zeros(size, dtype=bool)
+    colors = np.zeros((size, 5), dtype=np.int8)
+    activation_turn = np.full(size, 99, dtype=np.int8)
+    mana_bonus = np.zeros(size, dtype=np.int8)
+    discount = np.zeros(size, dtype=np.int8)
+    land_priority = np.full(size, -1, dtype=np.int16)
 
-
-def _castable_by_turn(
-    drawn: list[str],
-    turn: int,
-    commander_mv: int,
-    colored_requirements: dict[str, int],
-    card_config: dict[str, CardConfig],
-) -> bool:
-    demanded_colors = tuple(
-        color for color in COLORS if colored_requirements.get(color, 0) > 0
-    )
-
-    land_count = sum(
-        1
-        for name in drawn
-        if name in card_config and card_config[name].is_land
-    )
-    land_slots = min(turn, land_count)
-    active_lands = _selected_lands(
-        drawn, card_config, land_slots, demanded_colors
-    )
-
-    total_mana = len(active_lands)
-    color_capacity = {
-        color: sum(color in land.produces for land in active_lands)
-        for color in COLORS
-    }
-
-    total_discount = 0
-
-    for name in drawn:
+    for index, name in enumerate(deck):
         config = card_config.get(name)
-        if not config or config.is_land:
+        if config is None:
             continue
 
-        activation_turn = _category_activation_turn(config.category)
-        if turn < activation_turn:
-            continue
+        is_land[index] = config.is_land
+        for color_index, color in enumerate(COLORS):
+            colors[index, color_index] = int(color in config.produces)
 
-        bonus = _mana_bonus(config)
-        total_mana += bonus
+        activation_turn[index] = _category_activation_turn(config.category)
+        mana_bonus[index] = _mana_bonus(config)
+        discount[index] = _discount_amount(config)
 
-        if bonus > 0:
-            for color in COLORS:
-                if color in config.produces:
-                    color_capacity[color] += bonus
+        if config.is_land:
+            demanded_count = int(
+                np.sum(colors[index].astype(bool) & demanded_colors)
+            )
+            # Mirrors the old tuple sort:
+            # (number of demanded colors produced, total colors produced).
+            land_priority[index] = demanded_count * 10 + int(
+                np.sum(colors[index])
+            )
 
-        total_discount += _discount_amount(config)
-
-    colored_total = sum(colored_requirements.values())
-    generic_requirement = max(0, commander_mv - colored_total)
-    effective_cost = colored_total + max(0, generic_requirement - total_discount)
-
-    if total_mana < effective_cost:
-        return False
-
-    return all(
-        color_capacity[color] >= required
-        for color, required in colored_requirements.items()
-        if required > 0
+    return _PreparedCommanderDeck(
+        is_land=is_land,
+        colors=colors,
+        activation_turn=activation_turn,
+        mana_bonus=mana_bonus,
+        discount=discount,
+        land_priority=land_priority,
     )
+
+
+def _draw_order_batch(
+    rng: np.random.Generator,
+    batch_size: int,
+    deck_size: int,
+    draw_count: int,
+) -> np.ndarray:
+    """Generate an ordered sample without replacement using sparse retries."""
+    if draw_count > deck_size:
+        raise ValueError("Draw count cannot exceed deck size.")
+
+    draws = np.empty((batch_size, draw_count), dtype=np.int16)
+
+    for column in range(draw_count):
+        candidate = rng.integers(
+            0, deck_size, size=batch_size, dtype=np.int16
+        )
+
+        if column:
+            duplicate = np.any(
+                draws[:, :column] == candidate[:, None],
+                axis=1,
+            )
+            while np.any(duplicate):
+                candidate[duplicate] = rng.integers(
+                    0,
+                    deck_size,
+                    size=int(np.count_nonzero(duplicate)),
+                    dtype=np.int16,
+                )
+                duplicate = np.any(
+                    draws[:, :column] == candidate[:, None],
+                    axis=1,
+                )
+
+        draws[:, column] = candidate
+
+    return draws
+
+
+def _selected_land_stats(
+    seen: np.ndarray,
+    turn: int,
+    prepared: _PreparedCommanderDeck,
+) -> tuple[np.ndarray, np.ndarray]:
+    batch, width = seen.shape
+    priority = prepared.land_priority[seen]
+
+    # Preserve stable tie behavior from Python's sort by preferring earlier
+    # cards in the draw order when priority is equal.
+    positions = np.arange(width, dtype=np.int16)
+    stable_score = np.where(
+        priority >= 0,
+        priority.astype(np.int32) * 1000 + (width - positions),
+        -1,
+    )
+
+    take = min(turn, width)
+    chosen_positions = np.argpartition(
+        -stable_score, take - 1, axis=1
+    )[:, :take]
+    chosen_cards = np.take_along_axis(seen, chosen_positions, axis=1)
+    valid = np.take_along_axis(priority, chosen_positions, axis=1) >= 0
+
+    land_count = np.sum(valid, axis=1, dtype=np.int16)
+    chosen_colors = prepared.colors[chosen_cards]
+    color_capacity = np.sum(
+        chosen_colors * valid[..., None],
+        axis=1,
+        dtype=np.int16,
+    )
+    return land_count, color_capacity
 
 
 def simulate_commander_cast_turns(
@@ -177,43 +225,96 @@ def simulate_commander_cast_turns(
     iterations: int = 50_000,
     seed: int | None = None,
     max_turn: int = 10,
+    batch_size: int = COMMANDER_BATCH_SIZE,
 ) -> CommanderCastResult:
     if not deck:
         raise ValueError("Deck is empty.")
     if iterations <= 0:
         raise ValueError("iterations must be greater than zero.")
+    if max_turn <= 0:
+        raise ValueError("max_turn must be greater than zero.")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than zero.")
 
     commander_mv, colored_requirements = commander_requirements(commander_card)
-    rng = random.Random(seed)
-    first_counts = {turn: 0 for turn in range(1, max_turn + 1)}
+    requirement = np.array(
+        [colored_requirements[color] for color in COLORS],
+        dtype=np.int16,
+    )
+    demanded_colors = requirement > 0
+    colored_total = int(np.sum(requirement))
+    generic_requirement = max(0, commander_mv - colored_total)
+
+    prepared = _prepare_commander_deck(
+        deck, card_config, demanded_colors
+    )
+    rng = np.random.default_rng(seed)
+    first_counts = np.zeros(max_turn + 1, dtype=np.int64)
 
     max_draws = min(len(deck), 7 + max_turn)
+    remaining = iterations
 
-    for _ in range(iterations):
-        drawn_order = rng.sample(deck, max_draws)
-        first_turn: int | None = None
+    while remaining:
+        current_batch = min(batch_size, remaining)
+        drawn_order = _draw_order_batch(
+            rng,
+            current_batch,
+            len(deck),
+            max_draws,
+        )
+        unresolved = np.ones(current_batch, dtype=bool)
 
         for turn in range(1, max_turn + 1):
-            # Multiplayer Commander draws on turn 1, so by turn N the player
-            # has seen opening 7 + N cards before the main phase.
-            seen = min(len(drawn_order), 7 + turn)
-            drawn = drawn_order[:seen]
-
-            if _castable_by_turn(
-                drawn,
-                turn,
-                commander_mv,
-                colored_requirements,
-                card_config,
-            ):
-                first_turn = turn
+            if not np.any(unresolved):
                 break
 
-        if first_turn is not None:
-            first_counts[first_turn] += 1
+            seen_count = min(max_draws, 7 + turn)
+            seen = drawn_order[:, :seen_count]
+
+            land_mana, color_capacity = _selected_land_stats(
+                seen, turn, prepared
+            )
+
+            seen_activation = prepared.activation_turn[seen]
+            active_nonlands = (
+                (~prepared.is_land[seen])
+                & (seen_activation <= turn)
+            )
+
+            bonuses = prepared.mana_bonus[seen] * active_nonlands
+            bonus_mana = np.sum(bonuses, axis=1, dtype=np.int16)
+            total_mana = land_mana + bonus_mana
+
+            bonus_colors = (
+                prepared.colors[seen]
+                * bonuses[..., None]
+            )
+            color_capacity = color_capacity + np.sum(
+                bonus_colors, axis=1, dtype=np.int16
+            )
+
+            discounts = prepared.discount[seen] * active_nonlands
+            total_discount = np.sum(
+                discounts, axis=1, dtype=np.int16
+            )
+            effective_cost = colored_total + np.maximum(
+                0, generic_requirement - total_discount
+            )
+
+            enough_total = total_mana >= effective_cost
+            enough_colors = np.all(
+                color_capacity >= requirement,
+                axis=1,
+            )
+            castable = unresolved & enough_total & enough_colors
+
+            first_counts[turn] += int(np.count_nonzero(castable))
+            unresolved &= ~castable
+
+        remaining -= current_batch
 
     first_pct = {
-        turn: first_counts[turn] * 100.0 / iterations
+        turn: float(first_counts[turn] * 100.0 / iterations)
         for turn in range(1, max_turn + 1)
     }
 
