@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 from st_aggrid import AgGrid, DataReturnMode, GridUpdateMode, JsCode
 
+from mana_hand_simulator.commander_simulator import commander_mana_cost, simulate_commander_cast_turns
 from mana_hand_simulator.deck_loader import parse_deck_text
 from mana_hand_simulator.models import CardConfig, HandTier
 from mana_hand_simulator.scryfall import (
@@ -26,6 +27,7 @@ from mana_hand_simulator.simulator import run_simulation_from_data
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DECK = ROOT / "data" / "decklist.txt"
 DEFAULT_CONFIG = ROOT / "data" / "card_config.csv"
+DEFAULT_COMMANDER = "Avacyn, Angel of Horror"
 COLORS = ("W", "U", "B", "R", "G", "C")
 COLOR_NAMES = {
     "W": "White",
@@ -353,6 +355,7 @@ st.set_page_config(
 for color in COLORS:
     st.session_state.setdefault(f"color_{color}", 100.0 if color == "B" else 0.0)
 st.session_state.setdefault("config_editor_version", 0)
+st.session_state.setdefault("commander_name", DEFAULT_COMMANDER)
 
 st.title("Mana Hand Simulator")
 st.caption(
@@ -362,7 +365,7 @@ st.caption(
 with st.expander("Quick guide — what to set and what the results mean", expanded=True):
     st.markdown(
         """
-**1. Paste your deck** → click **Detect with Scryfall** to fill colors, lands, mana production, curve, and card data.
+**1. Paste your 99-card deck** and set your **Commander** separately. Click **Detect with Scryfall** to fill card data automatically.
 
 **2. Review Card Configuration**
 - **Category** = what kind of mana/setup card it is.
@@ -372,7 +375,7 @@ with st.expander("Quick guide — what to set and what the results mean", expand
 Use these categories: **Mana Rock**, **Ramp / Accelerator**, **Cost Discount**, **Big Mana**, **Conditional Mana**, **Premium Acceleration**, **Land/MDFC Land**, or **Other / Unscored**.
 
 **3. Read the result:** **A = explosive**, **B = strong keep**, **C = marginal/keepable**, **D = mulligan**.  
-**A/B Keep** is the main number to watch; **Color Coverage** shows how often your opening mana can support your deck's color needs.
+**A/B Keep** is the main number to watch; **Color Coverage** shows how often your opening mana can support your deck's color needs. The **Commander** section estimates the chance your commander is castable by Turns 1–10.
 """
     )
 
@@ -433,7 +436,75 @@ except Exception:
     parsed_deck = []
 
 with st.container(border=True):
-    st.subheader("3. Deck Color Distribution")
+    st.subheader("3. Commander")
+    st.caption(
+        "The commander starts in the command zone and is not shuffled into the 99-card library."
+    )
+
+    commander_col, load_col = st.columns([4, 1])
+    with commander_col:
+        commander_name = st.text_input(
+            "Commander name",
+            key="commander_name",
+            help="Enter the card name exactly or close to it; Scryfall will resolve it.",
+        )
+    with load_col:
+        st.write("")
+        st.write("")
+        load_commander = st.button(
+            "Load Commander",
+            type="secondary",
+            width="stretch",
+            disabled=not commander_name.strip(),
+        )
+
+    if load_commander:
+        try:
+            with st.spinner("Loading commander from Scryfall..."):
+                commander_cards, commander_missing = cached_scryfall_lookup(
+                    (commander_name.strip(),),
+                    SCRYFALL_CACHE_VERSION,
+                )
+            commander_card = commander_cards.get(commander_name.strip())
+            if not commander_card:
+                raise ValueError("Commander could not be matched on Scryfall.")
+            st.session_state["commander_card"] = commander_card
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+    commander_card = st.session_state.get("commander_card")
+    if commander_card:
+        loaded_name = str(commander_card.get("name", commander_name))
+        mana_cost = commander_mana_cost(commander_card) or "—"
+        identity = [
+            color for color in ("W", "U", "B", "R", "G")
+            if color in (commander_card.get("color_identity") or [])
+        ]
+
+        info1, info2, info3 = st.columns(3)
+        info1.metric("Commander", loaded_name)
+        info2.metric("Mana cost", mana_cost)
+
+        if identity:
+            symbols = " ".join(
+                f'<img src="{MANA_SYMBOLS[color]}" width="24" title="{COLOR_NAMES[color]}">'
+                for color in identity
+            )
+            info3.markdown(
+                f"<div style='padding-top:8px'><strong>Color identity</strong><br>{symbols}</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            info3.metric("Color identity", "Colorless")
+
+        st.caption(
+            "Turn percentages are calculated when you run the simulation. "
+            "They mean: chance the commander is castable by that turn."
+        )
+
+with st.container(border=True):
+    st.subheader("4. Deck Color Distribution")
     st.caption(
         "Set these manually, or let Scryfall calculate them from the nonland cards in your deck."
     )
@@ -454,8 +525,14 @@ with st.container(border=True):
     if auto_detect:
         try:
             with st.spinner("Looking up cards on Scryfall..."):
+                lookup_names = tuple(
+                    dict.fromkeys([
+                        *parsed_deck,
+                        *([commander_name.strip()] if commander_name.strip() else []),
+                    ])
+                )
                 scryfall_cards, missing = cached_scryfall_lookup(
-                    tuple(dict.fromkeys(parsed_deck)),
+                    lookup_names,
                     SCRYFALL_CACHE_VERSION,
                 )
                 distribution = calculate_card_color_distribution(
@@ -470,6 +547,8 @@ with st.container(border=True):
                 base_frame, parsed_deck, scryfall_cards
             )
             st.session_state["scryfall_cards"] = scryfall_cards
+            if commander_name.strip() and commander_name.strip() in scryfall_cards:
+                st.session_state["commander_card"] = scryfall_cards[commander_name.strip()]
             st.session_state["deck_summary"] = deck_summary(parsed_deck, scryfall_cards)
             st.session_state["config_editor_version"] += 1
 
@@ -558,7 +637,7 @@ with st.container(border=True):
         else:
             st.success("All matched cards are marked Commander-legal by Scryfall.")
 
-st.subheader("4. Card Configuration")
+st.subheader("5. Card Configuration")
 uploaded_config = st.file_uploader(
     "Upload card config (.csv)",
     type=["csv"],
@@ -914,6 +993,64 @@ if st.button("Run simulation", type="primary", width="stretch"):
 
         chart_data = results.set_index("Stage")[["A", "B", "C", "D"]]
         st.bar_chart(chart_data)
+
+        st.subheader("Commander Cast Probability")
+        active_commander = st.session_state.get("commander_card")
+        if not active_commander and commander_name.strip():
+            commander_cards, _ = cached_scryfall_lookup(
+                (commander_name.strip(),),
+                SCRYFALL_CACHE_VERSION,
+            )
+            active_commander = commander_cards.get(commander_name.strip())
+            if active_commander:
+                st.session_state["commander_card"] = active_commander
+
+        if active_commander:
+            commander_iterations = min(int(iterations), 50_000)
+            with st.spinner(
+                f"Estimating commander cast turns with {commander_iterations:,} samples..."
+            ):
+                commander_result = simulate_commander_cast_turns(
+                    deck,
+                    card_config,
+                    active_commander,
+                    iterations=commander_iterations,
+                    seed=int(seed) if use_seed else None,
+                    max_turn=10,
+                )
+
+            commander_rows = [
+                {
+                    "Turn": turn,
+                    "First cast on this turn": f"{commander_result.first_cast_turn[turn]:.1f}%",
+                    "Castable by this turn": f"{commander_result.cast_by_turn[turn]:.1f}%",
+                }
+                for turn in range(1, 11)
+            ]
+            st.dataframe(
+                pd.DataFrame(commander_rows),
+                hide_index=True,
+                width="stretch",
+            )
+
+            curve = pd.DataFrame(
+                {
+                    "Turn": list(range(1, 11)),
+                    "Castable by turn (%)": [
+                        commander_result.cast_by_turn[turn]
+                        for turn in range(1, 11)
+                    ],
+                }
+            ).set_index("Turn")
+            st.line_chart(curve)
+
+            st.caption(
+                "This is an estimate using your land flags, mana colors, categories and weights. "
+                "It models one land drop per turn and category-based acceleration/discount timing; "
+                "unusual cards such as Coffers-style scaling or variable mana can differ in real games."
+            )
+        else:
+            st.info("Load a commander above to calculate Turns 1–10.")
 
         st.subheader("Deck Diagnosis")
         st.caption(
