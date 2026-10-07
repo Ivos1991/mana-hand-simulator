@@ -54,9 +54,14 @@ def run_simulation_from_data(
     while remaining:
         current_batch = min(batch_size, remaining)
 
-        opening_indices = draw_index_hands(
-            rng, current_batch, len(deck), hand_size=7
+        # Opening and free-mulligan hands are independent samples, so draw
+        # them in one vectorized pass to halve sampler setup/loop overhead.
+        paired_indices = draw_index_hands(
+            rng, current_batch * 2, len(deck), hand_size=7
         )
+        opening_indices = paired_indices[:current_batch]
+        free_indices = paired_indices[current_batch:]
+
         opening = evaluate_index_hands(opening_indices, prepared)
         opening_acc.add(opening)
 
@@ -64,9 +69,6 @@ def run_simulation_from_data(
         final_acc.add(opening, opening_keep)
         seen_ab_after_free += int(np.count_nonzero(opening_keep))
 
-        free_indices = draw_index_hands(
-            rng, current_batch, len(deck), hand_size=7
-        )
         free = evaluate_index_hands(free_indices, prepared)
         free_acc.add(free)
 
