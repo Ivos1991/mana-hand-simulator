@@ -1,0 +1,4 @@
+-e .
+streamlit>=1.40
+pandas>=2.0
+streamlit-aggrid>=1.0.5
