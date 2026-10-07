@@ -5,10 +5,12 @@ import re
 import time
 from collections import Counter
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 COLORS = ("W", "U", "B", "R", "G")
 SCRYFALL_COLLECTION_URL = "https://api.scryfall.com/cards/collection"
+SCRYFALL_NAMED_URL = "https://api.scryfall.com/cards/named"
 USER_AGENT = "ManaHandSimulator/0.3 (https://github.com/Ivos1991/mana-hand-simulator)"
 MANA_SYMBOL_RE = re.compile(r"\{([^}]+)\}")
 
@@ -85,10 +87,29 @@ def fetch_cards(card_names: list[str]) -> tuple[dict[str, dict], list[str]]:
         else:
             unresolved.append(requested)
 
-    # The API's not_found list is authoritative, but include any request we
-    # could not map back to its original decklist spelling as a safety net.
-    missing = list(dict.fromkeys([*missing, *unresolved]))
+    # Some double-faced cards are listed in decklists using only one face name.
+    # If the collection endpoint did not map that spelling back cleanly, fall
+    # back to Scryfall's named lookup for only those unresolved cards.
+    still_missing: list[str] = []
+    for requested in unresolved:
+        request = Request(
+            f"{SCRYFALL_NAMED_URL}?fuzzy={quote(requested)}",
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=20) as response:
+                card = json.load(response)
+            normalized[requested] = card
+        except (HTTPError, URLError, TimeoutError):
+            still_missing.append(requested)
 
+        # Stay comfortably below Scryfall's API request-rate guidance.
+        time.sleep(0.12)
+
+    missing = list(dict.fromkeys(still_missing))
     return normalized, missing
 
 
