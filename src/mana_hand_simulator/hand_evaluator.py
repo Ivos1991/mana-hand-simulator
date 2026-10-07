@@ -7,6 +7,20 @@ from .models import CardConfig, HandEvaluation, HandTier
 COLORS = ("W", "U", "B", "R", "G")
 
 
+def calculate_color_access(
+    cards: tuple[str, ...],
+    card_config: dict[str, CardConfig],
+) -> tuple[str, ...]:
+    """Return the colored mana symbols available from sources in this hand."""
+    available: set[str] = set()
+    for card in cards:
+        config = card_config.get(card)
+        if not config:
+            continue
+        available.update(color for color in config.produces if color in COLORS)
+    return tuple(color for color in COLORS if color in available)
+
+
 def calculate_color_coverage(
     cards: tuple[str, ...],
     card_config: dict[str, CardConfig],
@@ -87,6 +101,7 @@ def evaluate_hand(
 
     base_tier = classify_hand(lands=lands, score=score)
     color_coverage = calculate_color_coverage(cards, card_config, color_demand)
+    color_access = calculate_color_access(cards, card_config)
     tier = _cap_tier_for_color_coverage(base_tier, color_coverage)
 
     return HandEvaluation(
@@ -95,6 +110,7 @@ def evaluate_hand(
         lands=lands,
         weighted_cards=scored_cards,
         color_coverage=color_coverage,
+        color_access=color_access,
     )
 
 
