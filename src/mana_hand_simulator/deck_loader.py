@@ -1,10 +1,43 @@
 from __future__ import annotations
 
 import csv
+import re
 from io import StringIO
 from pathlib import Path
 
 from .models import CardConfig
+
+
+MOXFIELD_TAG_RE = re.compile(r"\\s+#.*$")
+MOXFIELD_FOIL_RE = re.compile(r"\\s+\\*[^*]+\\*\\s*$")
+MOXFIELD_PRINTING_RE = re.compile(
+    r"\\s+\\([A-Za-z0-9]+\\)\\s+\\S+\\s*$"
+)
+
+
+def clean_exported_card_name(raw_name: str) -> str:
+    """Remove common Moxfield printing metadata/tags while preserving card names.
+
+    Examples:
+      "Alpha Deathclaw (PIP) 91 #Removal" -> "Alpha Deathclaw"
+      "Commercial District (PMKM) 259p *F*" -> "Commercial District"
+      "Disciple of Freyalise / Garden of Freyalise (MH3) 250 #Draw"
+        -> "Disciple of Freyalise / Garden of Freyalise"
+    """
+    name = raw_name.strip()
+
+    # Moxfield tags are appended after a whitespace-prefixed '#'.
+    name = MOXFIELD_TAG_RE.sub("", name).rstrip()
+
+    # Foil / finish markers such as *F* can appear after collector metadata.
+    name = MOXFIELD_FOIL_RE.sub("", name).rstrip()
+
+    # Printing metadata is normally "(SET) collector-number". Collector
+    # numbers may contain suffixes, hyphens, stars, etc., so treat the final
+    # token opaquely rather than trying to enumerate every possible format.
+    name = MOXFIELD_PRINTING_RE.sub("", name).rstrip()
+
+    return name
 
 
 def parse_deck_text(text: str) -> list[str]:
@@ -16,17 +49,27 @@ def parse_deck_text(text: str) -> list[str]:
             continue
 
         try:
-            quantity_text, card_name = line.split(maxsplit=1)
+            quantity_text, raw_card_name = line.split(maxsplit=1)
         except ValueError as exc:
             raise ValueError(
                 f"Invalid decklist line: {raw_line!r}. Expected 'quantity card name'."
             ) from exc
 
-        quantity = int(quantity_text)
+        try:
+            quantity = int(quantity_text)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid quantity in decklist line: {raw_line!r}."
+            ) from exc
+
         if quantity <= 0:
             raise ValueError(f"Quantity must be positive: {raw_line!r}")
 
-        cards.extend([card_name.strip()] * quantity)
+        card_name = clean_exported_card_name(raw_card_name)
+        if not card_name:
+            raise ValueError(f"Missing card name after parsing: {raw_line!r}")
+
+        cards.extend([card_name] * quantity)
 
     if not cards:
         raise ValueError("Decklist is empty.")
