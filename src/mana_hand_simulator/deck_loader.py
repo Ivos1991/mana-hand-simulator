@@ -38,6 +38,15 @@ def load_deck(path: str | Path) -> list[str]:
     return parse_deck_text(Path(path).read_text(encoding="utf-8"))
 
 
+def _parse_produces(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    raw = value.strip().upper()
+    if raw in {"", "NONE", "N/A"}:
+        return ()
+    return tuple(color for color in "WUBRGC" if color in raw)
+
+
 def parse_card_config_csv(text: str) -> dict[str, CardConfig]:
     configs: dict[str, CardConfig] = {}
     reader = csv.DictReader(StringIO(text))
@@ -59,6 +68,7 @@ def parse_card_config_csv(text: str) -> dict[str, CardConfig]:
             weight=float(row["weight"]),
             category=row["type"].strip(),
             is_land=is_land,
+            produces=_parse_produces(row.get("produces")),
         )
 
     return configs
