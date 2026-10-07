@@ -4,10 +4,72 @@ from collections.abc import Iterable
 
 from .models import CardConfig, HandEvaluation, HandTier
 
+COLORS = ("W", "U", "B", "R", "G")
+
+
+def calculate_color_coverage(
+    cards: tuple[str, ...],
+    card_config: dict[str, CardConfig],
+    color_demand: dict[str, float] | None,
+) -> float:
+    """Return 0..1 coverage of the deck's colored demand by this hand's sources.
+
+    Colorless demand is treated as "no colored requirement", not as a literal
+    requirement for {C}. This keeps ordinary artifacts/colorless spells from
+    forcing dedicated colorless sources.
+    """
+    if not color_demand:
+        return 1.0
+
+    colored_demand = {
+        color: max(0.0, float(color_demand.get(color, 0.0)))
+        for color in COLORS
+    }
+    total_colored = sum(colored_demand.values())
+    if total_colored <= 0:
+        return 1.0
+
+    mana_sources = [
+        card_config[card]
+        for card in cards
+        if card in card_config and card_config[card].produces
+    ]
+    if not mana_sources:
+        return 0.0
+
+    source_slots = len(mana_sources)
+    weighted_coverage = 0.0
+
+    for color, raw_demand in colored_demand.items():
+        if raw_demand <= 0:
+            continue
+
+        demand_share = raw_demand / total_colored
+        expected_sources = max(1.0, source_slots * demand_share)
+        available_sources = sum(color in source.produces for source in mana_sources)
+        color_coverage = min(1.0, available_sources / expected_sources)
+        weighted_coverage += demand_share * color_coverage
+
+    # If part of the deck is colorless, colored requirements matter less overall.
+    colored_pressure = min(1.0, total_colored / 100.0)
+    return 1.0 - colored_pressure * (1.0 - weighted_coverage)
+
+
+def _cap_tier_for_color_coverage(tier: HandTier, coverage: float) -> HandTier:
+    """Prevent color-starved hands from receiving unrealistically high tiers."""
+    if coverage < 0.55:
+        return HandTier.D
+    if coverage < 0.70 and tier in {HandTier.A, HandTier.B}:
+        return HandTier.C
+    if coverage < 0.85 and tier is HandTier.A:
+        return HandTier.B
+    return tier
+
 
 def evaluate_hand(
     hand: Iterable[str],
     card_config: dict[str, CardConfig],
+    color_demand: dict[str, float] | None = None,
 ) -> HandEvaluation:
     cards = tuple(hand)
     lands = sum(
@@ -23,13 +85,16 @@ def evaluate_hand(
     )
     score = sum(card_config[card].weight for card in scored_cards)
 
-    tier = classify_hand(lands=lands, score=score)
+    base_tier = classify_hand(lands=lands, score=score)
+    color_coverage = calculate_color_coverage(cards, card_config, color_demand)
+    tier = _cap_tier_for_color_coverage(base_tier, color_coverage)
 
     return HandEvaluation(
         tier=tier,
         score=score,
         lands=lands,
         weighted_cards=scored_cards,
+        color_coverage=color_coverage,
     )
 
 
