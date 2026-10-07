@@ -4,11 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mana-hand-simulator"
-version = "0.1.0"
+version = "0.2.0"
 description = "Configurable Monte Carlo simulator for Commander opening hands and mulligans."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "pandas>=2.0",
+    "streamlit>=1.40",
+]
 
 [project.scripts]
 mana-hand-simulator = "mana_hand_simulator.cli:main"
