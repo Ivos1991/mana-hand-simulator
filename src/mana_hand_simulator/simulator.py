@@ -60,9 +60,9 @@ def run_simulation_from_data(
         final_evals.append(london)
 
     return MulliganSimulation(
-        opening=summarize(opening_evals),
-        free_mulligan=summarize(free_evals),
-        final=summarize(final_evals),
+        opening=summarize(opening_evals, color_demand),
+        free_mulligan=summarize(free_evals, color_demand),
+        final=summarize(final_evals, color_demand),
         seen_ab_after_free_mulligan=seen_ab_after_free * 100 / iterations,
     )
 
