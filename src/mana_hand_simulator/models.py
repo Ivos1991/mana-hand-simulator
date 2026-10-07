@@ -36,7 +36,10 @@ class SimulationResult:
     counts: dict[HandTier, int]
     average_color_coverage: float = 1.0
     color_access_rates: dict[str, float] | None = None
-    full_color_access_rate: float = 1.0
+    full_color_access_rate: float = 100.0
+    average_score: float = 0.0
+    low_land_rate: float = 0.0
+    high_land_rate: float = 0.0
 
     def percentages(self) -> dict[HandTier, float]:
         if self.total == 0:
