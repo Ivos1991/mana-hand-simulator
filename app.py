@@ -386,7 +386,7 @@ with deck_col:
     uploaded_deck = st.file_uploader(
         "Upload decklist (.txt)",
         type=["txt"],
-        help="Format: one card per line as 'quantity card name'.",
+        help="Paste a plain list or a Moxfield export. Printing info, foil markers, and #tags are ignored automatically.",
     )
 
     if uploaded_deck is not None:
