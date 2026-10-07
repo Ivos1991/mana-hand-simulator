@@ -100,10 +100,19 @@ def calculate_card_color_distribution(
     if considered == 0:
         return {color: 0.0 for color in (*COLORS, "C")}
 
-    return {
-        color: round(totals[color] * 100.0 / considered, 1)
+    raw = {
+        color: totals[color] * 100.0 / considered
         for color in (*COLORS, "C")
     }
+    rounded = {color: round(value, 1) for color, value in raw.items()}
+
+    # Keep the editable UI total at exactly 100.0 after display rounding.
+    residual = round(100.0 - sum(rounded.values()), 1)
+    if residual:
+        largest = max(raw, key=raw.get)
+        rounded[largest] = round(rounded[largest] + residual, 1)
+
+    return rounded
 
 
 def produced_mana(card: dict) -> str:
