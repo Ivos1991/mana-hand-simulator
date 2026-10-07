@@ -1,4 +1,5 @@
 from mana_hand_simulator.hand_evaluator import (
+    calculate_color_access,
     calculate_color_coverage,
     classify_hand,
     evaluate_hand,
@@ -47,3 +48,17 @@ def test_mono_color_hand_keeps_full_coverage() -> None:
 
     assert result.color_coverage > 0.75
     assert result.tier in {HandTier.A, HandTier.B}
+
+
+def test_color_access_tracks_each_available_color() -> None:
+    config = {
+        "Watery Grave": CardConfig("Watery Grave", 0, "Land", True, ("U", "B")),
+        "Mountain": CardConfig("Mountain", 0, "Land", True, ("R",)),
+    }
+    hand = ("Watery Grave", "Mountain", "Filler", "Filler", "Filler", "Filler", "Filler")
+
+    access = calculate_color_access(hand, config)
+    result = evaluate_hand(hand, config, {"U": 40, "B": 40, "R": 20})
+
+    assert access == ("U", "B", "R")
+    assert result.color_access == ("U", "B", "R")
