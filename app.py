@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from st_aggrid import AgGrid, DataReturnMode, GridUpdateMode, JsCode
 
 from mana_hand_simulator.deck_loader import parse_deck_text
 from mana_hand_simulator.models import CardConfig, HandTier
@@ -325,18 +326,6 @@ with st.container(border=True):
             + ("…" if len(missing) > 10 else "")
         )
 
-    scryfall_cards = st.session_state.get("scryfall_cards", {})
-    if scryfall_cards:
-        with st.expander("Card image preview"):
-            preview_name = st.selectbox(
-                "Card",
-                options=list(scryfall_cards.keys()),
-                label_visibility="collapsed",
-            )
-            image_url = card_image_url(scryfall_cards[preview_name])
-            if image_url:
-                st.image(image_url, width=260)
-
 st.subheader("4. Card Configuration")
 uploaded_config = st.file_uploader(
     "Upload card config (.csv)",
@@ -354,26 +343,210 @@ elif "config_frame" not in st.session_state:
 
 config_frame = ensure_config_shape(st.session_state["config_frame"])
 
-edited_config = st.data_editor(
-    config_frame,
-    width="stretch",
-    hide_index=True,
-    num_rows="dynamic",
-    key=f"config_editor_{st.session_state['config_editor_version']}",
-    column_config={
-        "card_name": st.column_config.TextColumn("Card", required=True),
-        "weight": st.column_config.NumberColumn(
-            "Weight", min_value=0.0, step=0.5, format="%.1f"
-        ),
-        "type": st.column_config.TextColumn("Type"),
-        "is_land": st.column_config.CheckboxColumn("Land"),
-        "produces": st.column_config.SelectboxColumn(
-            "Produces",
-            options=PRODUCES_OPTIONS,
-            help="Mana colors this card can produce.",
-        ),
-    },
+scryfall_cards = st.session_state.get("scryfall_cards", {})
+grid_frame = config_frame.copy()
+grid_frame["image_url"] = grid_frame["card_name"].map(
+    lambda name: card_image_url(scryfall_cards.get(str(name), {}))
+    if str(name) in scryfall_cards
+    else ""
 )
+
+card_tooltip = JsCode(
+    """
+class CardImageTooltip {
+  init(params) {
+    this.eGui = document.createElement('div');
+    this.eGui.style.background = '#111827';
+    this.eGui.style.border = '1px solid #374151';
+    this.eGui.style.borderRadius = '10px';
+    this.eGui.style.padding = '8px';
+    this.eGui.style.boxShadow = '0 8px 24px rgba(0,0,0,.35)';
+    this.eGui.style.maxWidth = '260px';
+
+    const url = params.data && params.data.image_url;
+    if (!url) {
+      this.eGui.innerHTML = '<div style="padding:6px;color:#ddd">Load Scryfall data to enable card previews.</div>';
+      return;
+    }
+
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = params.value || 'Card image';
+    img.style.width = '240px';
+    img.style.display = 'block';
+    img.style.borderRadius = '8px';
+    this.eGui.appendChild(img);
+  }
+
+  getGui() {
+    return this.eGui;
+  }
+}
+"""
+)
+
+mana_renderer = JsCode(
+    """
+function(params) {
+  const value = params.value || '';
+  if (!value) return '';
+
+  return Array.from(value).map(symbol => {
+    const src = 'https://svgs.scryfall.io/card-symbols/' + symbol + '.svg';
+    return '<img src="' + src + '" title="' + symbol + '" ' +
+           'style="width:22px;height:22px;margin-right:3px;vertical-align:middle;" />';
+  }).join('');
+}
+"""
+)
+
+mana_editor = JsCode(
+    """
+class ManaSymbolEditor {
+  init(params) {
+    this.params = params;
+    this.value = params.value || '';
+    this.eGui = document.createElement('div');
+    this.eGui.style.background = '#111827';
+    this.eGui.style.border = '1px solid #4b5563';
+    this.eGui.style.borderRadius = '8px';
+    this.eGui.style.padding = '5px';
+    this.eGui.style.maxHeight = '280px';
+    this.eGui.style.overflowY = 'auto';
+    this.eGui.style.minWidth = '170px';
+    this.eGui.style.boxShadow = '0 10px 28px rgba(0,0,0,.4)';
+
+    const values = (params.values || []).slice();
+
+    values.forEach(value => {
+      const option = document.createElement('div');
+      option.style.display = 'flex';
+      option.style.alignItems = 'center';
+      option.style.gap = '4px';
+      option.style.padding = '6px 8px';
+      option.style.cursor = 'pointer';
+      option.style.borderRadius = '6px';
+
+      option.onmouseenter = () => option.style.background = '#374151';
+      option.onmouseleave = () => option.style.background = 'transparent';
+
+      if (!value) {
+        const label = document.createElement('span');
+        label.textContent = 'None';
+        label.style.color = '#d1d5db';
+        option.appendChild(label);
+      } else {
+        Array.from(value).forEach(symbol => {
+          const img = document.createElement('img');
+          img.src = 'https://svgs.scryfall.io/card-symbols/' + symbol + '.svg';
+          img.alt = symbol;
+          img.title = symbol;
+          img.style.width = '22px';
+          img.style.height = '22px';
+          option.appendChild(img);
+        });
+      }
+
+      option.addEventListener('mousedown', event => {
+        event.preventDefault();
+        this.value = value;
+        if (this.params.stopEditing) {
+          this.params.stopEditing();
+        } else if (this.params.api) {
+          this.params.api.stopEditing();
+        }
+      });
+
+      this.eGui.appendChild(option);
+    });
+  }
+
+  getGui() {
+    return this.eGui;
+  }
+
+  afterGuiAttached() {}
+
+  getValue() {
+    return this.value;
+  }
+
+  isPopup() {
+    return true;
+  }
+}
+"""
+)
+
+grid_options = {
+    "defaultColDef": {
+        "resizable": True,
+        "sortable": True,
+        "filter": True,
+        "editable": True,
+    },
+    "columnDefs": [
+        {
+            "headerName": "Card",
+            "field": "card_name",
+            "minWidth": 260,
+            "tooltipComponent": card_tooltip,
+            "tooltipValueGetter": JsCode("function(params) { return params.value; }"),
+        },
+        {
+            "headerName": "Weight",
+            "field": "weight",
+            "width": 110,
+            "type": "numericColumn",
+            "cellEditor": "agNumberCellEditor",
+            "cellEditorParams": {"min": 0, "step": 0.5},
+        },
+        {
+            "headerName": "Type",
+            "field": "type",
+            "minWidth": 170,
+        },
+        {
+            "headerName": "Land",
+            "field": "is_land",
+            "width": 95,
+            "cellRenderer": "agCheckboxCellRenderer",
+            "cellEditor": "agCheckboxCellEditor",
+        },
+        {
+            "headerName": "Produces",
+            "field": "produces",
+            "minWidth": 180,
+            "cellRenderer": mana_renderer,
+            "cellEditor": mana_editor,
+            "cellEditorParams": {"values": PRODUCES_OPTIONS},
+        },
+        {
+            "field": "image_url",
+            "hide": True,
+            "editable": False,
+        },
+    ],
+    "tooltipShowDelay": 250,
+    "tooltipHideDelay": 5000,
+    "stopEditingWhenCellsLoseFocus": True,
+}
+
+grid_response = AgGrid(
+    grid_frame,
+    gridOptions=grid_options,
+    height=520,
+    theme="streamlit",
+    data_return_mode=DataReturnMode.AS_INPUT,
+    update_mode=GridUpdateMode.VALUE_CHANGED,
+    allow_unsafe_jscode=True,
+    fit_columns_on_grid_load=True,
+)
+
+edited_config = pd.DataFrame(grid_response["data"]).drop(
+    columns=["image_url"], errors="ignore"
+)
+edited_config = ensure_config_shape(edited_config)
 st.session_state["config_frame"] = edited_config
 
 st.caption(
