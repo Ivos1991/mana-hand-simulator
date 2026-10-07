@@ -9,7 +9,7 @@ from .models import CardConfig
 
 COLORS = ("W", "U", "B", "R", "G")
 MANA_SYMBOL_RE = re.compile(r"\{([^}]+)\}")
-COMMANDER_BATCH_SIZE = 20_000
+COMMANDER_BATCH_SIZE = 50_000
 
 
 @dataclass(frozen=True)
