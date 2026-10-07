@@ -106,9 +106,15 @@ def ensure_config_shape(frame: pd.DataFrame) -> pd.DataFrame:
     if "suggested_category" not in frame.columns:
         frame["suggested_category"] = ""
     if "suggested_weight" not in frame.columns:
-        frame["suggested_weight"] = ""
+        frame["suggested_weight"] = float("nan")
     if "suggestion_confidence" not in frame.columns:
         frame["suggestion_confidence"] = ""
+    # Keep suggested weights numeric. Pandas 3 uses stricter string dtypes,
+    # so assigning float suggestions into a column initialized with "" raises
+    # "Invalid value ... for dtype 'str'".
+    frame["suggested_weight"] = pd.to_numeric(
+        frame["suggested_weight"], errors="coerce"
+    )
     frame["produces"] = frame["produces"].fillna("").astype(str)
     frame["type"] = (
         frame["type"]
