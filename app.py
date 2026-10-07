@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import StringIO
 from itertools import combinations
+from math import comb
 from pathlib import Path
 
 import pandas as pd
@@ -57,8 +58,8 @@ CATEGORY_OPTIONS = [
 ]
 CATEGORY_ALIASES = {
     "unscored": "Other / Unscored",
-    "Land": "Land",
-    "MDFC Land": "MDFC Land",
+    "land": "Land",
+    "mdfc_land": "MDFC Land",
     "mana_rock": "Mana Rock",
     "ramp": "Ramp / Accelerator",
     "acceleration": "Ramp / Accelerator",
@@ -192,9 +193,9 @@ def enrich_config_from_scryfall(
             if is_land:
                 frame.at[index, "is_land"] = True
             if is_mdfc and str(frame.at[index, "type"]).strip() in {"", "Other / Unscored"}:
-                frame.at[index, "type"] = "mdfc_land"
-            elif is_land and str(frame.at[index, "type"]).strip() in {"", "unscored"}:
-                frame.at[index, "type"] = "land"
+                frame.at[index, "type"] = "MDFC Land"
+            elif is_land and str(frame.at[index, "type"]).strip() in {"", "Other / Unscored"}:
+                frame.at[index, "type"] = "Land"
             if produces:
                 frame.at[index, "produces"] = produces
         else:
@@ -202,7 +203,7 @@ def enrich_config_from_scryfall(
                 {
                     "card_name": name,
                     "weight": 0.0,
-                    "type": "mdfc_land" if is_mdfc else ("land" if is_land else "unscored"),
+                    "type": "MDFC Land" if is_mdfc else ("Land" if is_land else "Other / Unscored"),
                     "is_land": is_land,
                     "produces": produces,
                 }
@@ -212,6 +213,135 @@ def enrich_config_from_scryfall(
         frame = pd.concat([frame, pd.DataFrame(rows_to_add)], ignore_index=True)
 
     return frame
+
+
+
+def source_count_by_color(
+    deck: list[str],
+    card_config: dict[str, CardConfig],
+) -> dict[str, int]:
+    return {
+        color: sum(
+            1
+            for card in deck
+            if card in card_config and color in card_config[card].produces
+        )
+        for color in ("W", "U", "B", "R", "G")
+    }
+
+
+def opening_access_probability(deck_size: int, sources: int, hand_size: int = 7) -> float:
+    if sources <= 0:
+        return 0.0
+    if sources >= deck_size:
+        return 100.0
+    misses = comb(deck_size - sources, hand_size) / comb(deck_size, hand_size)
+    return (1.0 - misses) * 100.0
+
+
+def recommended_sources_for_demand(
+    deck_size: int,
+    demand_share: float,
+) -> tuple[int, float]:
+    # Stronger demand deserves a higher target chance of seeing at least one
+    # source in the opening seven. Splash colors use a softer target.
+    if demand_share >= 30:
+        target = 90.0
+    elif demand_share >= 15:
+        target = 85.0
+    elif demand_share >= 5:
+        target = 75.0
+    else:
+        target = 65.0
+
+    for sources in range(deck_size + 1):
+        if opening_access_probability(deck_size, sources) >= target:
+            return sources, target
+    return deck_size, target
+
+
+def build_diagnostics(
+    deck: list[str],
+    card_config: dict[str, CardConfig],
+    color_demand: dict[str, float],
+    result,
+) -> list[tuple[str, str]]:
+    notes: list[tuple[str, str]] = []
+    final_pct = result.final.percentages()
+    final_ab = final_pct[HandTier.A] + final_pct[HandTier.B]
+    opening = result.opening
+
+    if final_ab >= 70:
+        notes.append(("good", f"Opening consistency is strong: {final_ab:.1f}% of final hands are A/B."))
+    elif final_ab >= 60:
+        notes.append(("good", f"Opening consistency is healthy: {final_ab:.1f}% of final hands are A/B."))
+    elif final_ab >= 50:
+        notes.append(("warn", f"Opening consistency is a little shaky: {final_ab:.1f}% of final hands are A/B."))
+    else:
+        notes.append(("bad", f"Opening consistency is low: only {final_ab:.1f}% of final hands are A/B."))
+
+    if opening.low_land_rate >= 18:
+        notes.append((
+            "bad",
+            f"{opening.low_land_rate:.1f}% of opening hands have fewer than 2 lands. "
+            "Consider adding land-capable cards or replacing narrow nonlands."
+        ))
+    elif opening.high_land_rate >= 18:
+        notes.append((
+            "warn",
+            f"{opening.high_land_rate:.1f}% of opening hands have 5+ lands. "
+            "You may be slightly land-heavy for this acceleration package."
+        ))
+    elif final_ab < 60 and opening.average_score < 2.0:
+        notes.append((
+            "warn",
+            "Land count is not the main problem; early acceleration is light. "
+            "Consider more Mana Rocks, Ramp / Accelerators, Cost Discounts, or Premium Acceleration."
+        ))
+
+    demanded = {
+        color: float(color_demand.get(color, 0.0))
+        for color in ("W", "U", "B", "R", "G")
+        if float(color_demand.get(color, 0.0)) > 0
+    }
+    access_rates = opening.color_access_rates or {}
+    source_counts = source_count_by_color(deck, card_config)
+
+    if len(demanded) > 1:
+        full = opening.full_color_access_rate
+        if full < 50:
+            notes.append((
+                "bad",
+                f"Only {full:.1f}% of opening hands contain a source for every deck color. "
+                "Color fixing is a major bottleneck."
+            ))
+        elif full < 70:
+            notes.append((
+                "warn",
+                f"{full:.1f}% of opening hands contain all deck colors. "
+                "Your mana works, but fixing could be more consistent."
+            ))
+
+    for color, demand in sorted(demanded.items(), key=lambda item: item[1], reverse=True):
+        access = float(access_rates.get(color, 0.0))
+        current_sources = source_counts.get(color, 0)
+        target_sources, target_access = recommended_sources_for_demand(len(deck), demand)
+        shortfall = max(0, target_sources - current_sources)
+
+        if access + 0.01 < target_access and shortfall > 0:
+            name = COLOR_NAMES[color]
+            notes.append((
+                "bad" if access < 60 else "warn",
+                f"{name}: {demand:.1f}% of colored demand, but only {access:.1f}% of opening hands "
+                f"contain a {color} source. You currently have {current_sources} source(s). "
+                f"Consider about {shortfall} more source(s) that can produce {color}, ideally by "
+                "swapping colorless or off-color sources rather than only increasing deck size."
+            ))
+
+    if len(notes) == 1 and final_ab >= 60:
+        notes.append(("good", "No obvious mana-base bottleneck was detected from these opening-hand results."))
+
+    return notes
 
 
 st.set_page_config(
@@ -784,6 +914,43 @@ if st.button("Run simulation", type="primary", width="stretch"):
 
         chart_data = results.set_index("Stage")[["A", "B", "C", "D"]]
         st.bar_chart(chart_data)
+
+        st.subheader("Deck Diagnosis")
+        st.caption(
+            "These are deterministic recommendations from the simulation — not hard deck-building rules."
+        )
+        diagnostics = build_diagnostics(deck, card_config, color_demand, result)
+        for severity, message in diagnostics:
+            if severity == "good":
+                st.success(message)
+            elif severity == "bad":
+                st.error(message)
+            else:
+                st.warning(message)
+
+        if result.opening.color_access_rates:
+            st.markdown("**Opening color access**")
+            color_rows = []
+            source_counts = source_count_by_color(deck, card_config)
+            for color in ("W", "U", "B", "R", "G"):
+                demand = float(color_demand.get(color, 0.0))
+                if demand <= 0:
+                    continue
+                target_sources, target_access = recommended_sources_for_demand(len(deck), demand)
+                color_rows.append(
+                    {
+                        "Color": COLOR_NAMES[color],
+                        "Demand": f"{demand:.1f}%",
+                        "Sources": source_counts[color],
+                        "Opening access": f"{result.opening.color_access_rates.get(color, 0.0):.1f}%",
+                        "Suggested target": f"{target_sources} sources / ~{target_access:.0f}% access",
+                    }
+                )
+            st.dataframe(pd.DataFrame(color_rows), hide_index=True, width="stretch")
+            if len(color_rows) > 1:
+                st.caption(
+                    f"All required colors appear together in {result.opening.full_color_access_rate:.1f}% of opening hands."
+                )
 
         with st.expander("Simulation details"):
             st.write(f"Deck size: **{len(deck)}** cards")
