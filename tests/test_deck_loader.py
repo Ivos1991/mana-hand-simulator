@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mana_hand_simulator.deck_loader import load_card_config, load_deck
+from mana_hand_simulator.deck_loader import load_card_config, load_deck, parse_deck_text
 
 
 def test_load_deck(tmp_path: Path) -> None:
