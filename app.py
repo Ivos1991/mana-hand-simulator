@@ -102,6 +102,12 @@ def ensure_config_shape(frame: pd.DataFrame) -> pd.DataFrame:
         frame["produces"] = ""
     if "type" not in frame.columns:
         frame["type"] = "Other / Unscored"
+    if "suggested_category" not in frame.columns:
+        frame["suggested_category"] = ""
+    if "suggested_weight" not in frame.columns:
+        frame["suggested_weight"] = ""
+    if "suggestion_confidence" not in frame.columns:
+        frame["suggestion_confidence"] = ""
     frame["produces"] = frame["produces"].fillna("").astype(str)
     frame["type"] = (
         frame["type"]
@@ -167,6 +173,94 @@ def percentages_row(label: str, result) -> dict[str, float | str]:
     }
 
 
+def _oracle_text(card: dict) -> str:
+    parts = [str(card.get("oracle_text") or "")]
+    for face in card.get("card_faces") or []:
+        parts.append(str(face.get("oracle_text") or ""))
+    return "\n".join(part for part in parts if part).casefold()
+
+
+def suggest_card_setup(card: dict) -> tuple[str, float, str]:
+    """Conservative rule-based suggestion for opening-hand category/weight."""
+    if not card:
+        return "Other / Unscored", 0.0, "Low"
+
+    if is_mdfc_land(card):
+        return "MDFC Land", 0.0, "High"
+    if is_land_card(card):
+        return "Land", 0.0, "High"
+
+    type_line = str(card.get("type_line") or "")
+    oracle = _oracle_text(card)
+    mv = float(card.get("cmc") or 0.0)
+    produces = produced_mana(card)
+
+    # Explicit cost reduction is usually easy to identify.
+    if "cost" in oracle and " less to cast" in oracle:
+        weight = 2.0 if mv <= 3 else 1.5
+        return "Cost Discount", weight, "High"
+
+    # Mana doublers / scaling engines: powerful, but usually later and contextual.
+    big_mana_phrases = (
+        "additional mana",
+        "for each land",
+        "for each swamp",
+        "for each forest",
+        "for each island",
+        "for each mountain",
+        "for each plains",
+        "double the amount of",
+    )
+    if any(phrase in oracle for phrase in big_mana_phrases):
+        return "Big Mana", 1.5 if mv <= 4 else 1.0, "Medium"
+
+    is_artifact = "Artifact" in type_line
+    taps_for_mana = "{t}" in oracle and "add {" in oracle
+
+    if is_artifact and taps_for_mana:
+        # Extremely efficient rocks get premium treatment.
+        if mv <= 1:
+            if "add {c}{c}" in oracle or "add three mana" in oracle or "add {c}{c}{c}" in oracle:
+                return "Premium Acceleration", 3.0, "High"
+            return "Mana Rock", 2.5, "High"
+        if mv <= 2:
+            return "Mana Rock", 2.0, "High"
+        if mv <= 3:
+            return "Mana Rock", 1.5, "High"
+        return "Mana Rock", 1.0, "High"
+
+    # Creatures/permanents that directly tap or sacrifice for mana.
+    if ("add {" in oracle or "add one mana" in oracle) and (
+        "{t}" in oracle or "sacrifice" in oracle
+    ):
+        conditional_words = ("sacrifice", "only if", "for each", "equal to")
+        if any(word in oracle for word in conditional_words):
+            return "Conditional Mana", 1.0 if mv <= 3 else 0.5, "Medium"
+        return "Ramp / Accelerator", 1.5 if mv <= 3 else 1.0, "Medium"
+
+    # Land-search / put-land-onto-battlefield spells and creatures.
+    land_ramp_phrases = (
+        "search your library for a basic land",
+        "search your library for a land card",
+        "put a land card from your hand onto the battlefield",
+        "put up to one land card from your hand onto the battlefield",
+    )
+    if any(phrase in oracle for phrase in land_ramp_phrases):
+        return "Ramp / Accelerator", 1.5 if mv <= 3 else 1.0, "High"
+
+    # Treasure-making is acceleration, but often conditional or delayed.
+    if "treasure token" in oracle:
+        if mv <= 3:
+            return "Ramp / Accelerator", 1.0, "Medium"
+        return "Conditional Mana", 0.5, "Low"
+
+    # A nonland card known by Scryfall to produce mana is at least worth review.
+    if produces:
+        return "Conditional Mana", 1.0 if mv <= 3 else 0.5, "Low"
+
+    return "Other / Unscored", 0.0, "High"
+
+
 def enrich_config_from_scryfall(
     frame: pd.DataFrame,
     deck: list[str],
@@ -189,6 +283,7 @@ def enrich_config_from_scryfall(
         is_land = is_land_card(card)
         is_mdfc = is_mdfc_land(card)
         produces = produced_mana(card)
+        suggested_category, suggested_weight, suggestion_confidence = suggest_card_setup(card)
 
         if name in by_name:
             index = by_name[name]
@@ -200,6 +295,9 @@ def enrich_config_from_scryfall(
                 frame.at[index, "type"] = "Land"
             if produces:
                 frame.at[index, "produces"] = produces
+            frame.at[index, "suggested_category"] = suggested_category
+            frame.at[index, "suggested_weight"] = suggested_weight
+            frame.at[index, "suggestion_confidence"] = suggestion_confidence
         else:
             rows_to_add.append(
                 {
@@ -208,6 +306,9 @@ def enrich_config_from_scryfall(
                     "type": "MDFC Land" if is_mdfc else ("Land" if is_land else "Other / Unscored"),
                     "is_land": is_land,
                     "produces": produces,
+                    "suggested_category": suggested_category,
+                    "suggested_weight": suggested_weight,
+                    "suggestion_confidence": suggestion_confidence,
                 }
             )
 
@@ -371,6 +472,7 @@ with st.expander("Quick guide — what to set and what the results mean", expand
 - **Category** = what kind of mana/setup card it is.
 - **Weight** = how valuable it is in an opening hand: **0** not acceleration, **1** small boost, **1.5–2** strong, **3** premium/explosive.
 - **Land** and **Produces** are usually filled automatically; adjust only if needed.
+- **Suggested Category / Weight** are conservative Scryfall-based guesses. Review them before applying.
 
 Use these categories: **Mana Rock**, **Ramp / Accelerator**, **Cost Discount**, **Big Mana**, **Conditional Mana**, **Premium Acceleration**, **Land/MDFC Land**, or **Other / Unscored**.
 
@@ -887,6 +989,24 @@ grid_options = {
             "cellEditorParams": {"values": CATEGORY_OPTIONS},
         },
         {
+            "headerName": "Suggested Category",
+            "field": "suggested_category",
+            "minWidth": 190,
+            "editable": False,
+        },
+        {
+            "headerName": "Suggested Weight",
+            "field": "suggested_weight",
+            "width": 145,
+            "editable": False,
+        },
+        {
+            "headerName": "Confidence",
+            "field": "suggestion_confidence",
+            "width": 115,
+            "editable": False,
+        },
+        {
             "headerName": "Land",
             "field": "is_land",
             "width": 95,
@@ -927,10 +1047,34 @@ edited_config = pd.DataFrame(grid_response["data"]).drop(
     columns=["image_url"], errors="ignore"
 )
 edited_config = ensure_config_shape(edited_config)
+
+apply_suggestions = st.button(
+    "Apply suggested categories & weights",
+    type="secondary",
+    help="Copies the suggested values into Category and Weight. You can still edit every card afterward.",
+)
+
+if apply_suggestions:
+    has_suggestion = edited_config["suggested_category"].astype(str).str.len() > 0
+    edited_config.loc[has_suggestion, "type"] = edited_config.loc[
+        has_suggestion, "suggested_category"
+    ]
+    numeric_suggestions = pd.to_numeric(
+        edited_config["suggested_weight"], errors="coerce"
+    )
+    weight_mask = numeric_suggestions.notna()
+    edited_config.loc[weight_mask, "weight"] = numeric_suggestions[weight_mask]
+    edited_config = ensure_config_shape(edited_config)
+    st.session_state["config_frame"] = edited_config
+    st.session_state["config_editor_version"] += 1
+    st.success("Suggestions applied. Review the table and adjust any deck-specific cards.")
+    st.rerun()
+
 st.session_state["config_frame"] = edited_config
 
 st.caption(
-    "Tip: most cards should stay Other / Unscored with weight 0. Only give weight to cards that genuinely improve an opening hand's mana/setup."
+    "Tip: suggestions are a starting point, not a verdict. Weight measures opening-hand usefulness, "
+    "not overall card power; deck-specific cards may need manual adjustment."
 )
 
 if st.button("Run simulation", type="primary", width="stretch"):
