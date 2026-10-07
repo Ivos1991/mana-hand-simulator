@@ -46,6 +46,7 @@ PRODUCES_OPTIONS = [""] + [
     for size in range(1, 7)
     for combo in combinations("WUBRGC", size)
 ]
+WEIGHT_OPTIONS = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
 
 CATEGORY_OPTIONS = [
     "Other / Unscored",
@@ -470,7 +471,7 @@ with st.expander("Quick guide — what to set and what the results mean", expand
 
 **2. Review Card Configuration**
 - **Category** = what kind of mana/setup card it is.
-- **Weight** = how valuable it is in an opening hand: **0** not acceleration, **1** small boost, **1.5–2** strong, **3** premium/explosive.
+- **Weight** = how valuable it is in an opening hand. Choose from the dropdown: **0** not acceleration, **0.5–1** small boost, **1.5–2** strong, **2.5–3** premium/explosive.
 - **Land** and **Produces** are usually filled automatically; adjust only if needed.
 - **Suggested Category / Weight** are conservative Scryfall-based guesses. Review them before applying.
 
@@ -978,8 +979,8 @@ grid_options = {
             "field": "weight",
             "width": 110,
             "type": "numericColumn",
-            "cellEditor": "agNumberCellEditor",
-            "cellEditorParams": {"min": 0, "step": 0.5},
+            "cellEditor": "agSelectCellEditor",
+            "cellEditorParams": {"values": WEIGHT_OPTIONS},
         },
         {
             "headerName": "Category",
