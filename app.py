@@ -292,7 +292,9 @@ with settings_col:
             help="42 is only an arbitrary example seed. Any integer works.",
         )
         st.caption(
-            "Leave this off for normal use. Turn it on only when you want two runs to use the exact same random draws."
+            "Seed = the starting point for the simulator's random number generator. "
+            "Using the same seed makes the app draw the same simulated hands again, "
+            "which is useful for fair before/after comparisons. Leave it off for normal use."
         )
 
 try:
