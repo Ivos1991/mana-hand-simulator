@@ -45,8 +45,15 @@ PRODUCES_OPTIONS = [""] + [
 ]
 
 
+SCRYFALL_CACHE_VERSION = "mdfc-v3"
+
 @st.cache_data(ttl=86_400, show_spinner=False)
-def cached_scryfall_lookup(card_names: tuple[str, ...]):
+def cached_scryfall_lookup(
+    card_names: tuple[str, ...],
+    cache_version: str,
+):
+    # cache_version intentionally participates in the key so parser/matching
+    # fixes do not leave users stuck with stale 24-hour Scryfall data.
     return fetch_cards(list(card_names))
 
 
@@ -278,7 +285,8 @@ with st.container(border=True):
         try:
             with st.spinner("Looking up cards on Scryfall..."):
                 scryfall_cards, missing = cached_scryfall_lookup(
-                    tuple(dict.fromkeys(parsed_deck))
+                    tuple(dict.fromkeys(parsed_deck)),
+                    SCRYFALL_CACHE_VERSION,
                 )
                 distribution = calculate_card_color_distribution(
                     parsed_deck, scryfall_cards
@@ -405,40 +413,89 @@ grid_frame["image_url"] = grid_frame["card_name"].map(
     else ""
 )
 
-card_tooltip = JsCode(
+card_renderer = JsCode(
     """
-class CardImageTooltip {
+class CardNameRenderer {
   init(params) {
-    this.eGui = document.createElement('div');
-    this.eGui.style.background = '#111827';
-    this.eGui.style.border = '1px solid #374151';
-    this.eGui.style.borderRadius = '10px';
-    this.eGui.style.padding = '8px';
-    this.eGui.style.boxShadow = '0 8px 24px rgba(0,0,0,.35)';
-    this.eGui.style.maxWidth = '260px';
+    this.params = params;
+    this.eGui = document.createElement('span');
+    this.eGui.textContent = params.value || '';
+    this.eGui.style.cursor = params.data && params.data.image_url ? 'help' : 'default';
 
-    const url = params.data && params.data.image_url;
-    if (!url) {
-      this.eGui.innerHTML = '<div style="padding:6px;color:#ddd">Load Scryfall data to enable card previews.</div>';
-      return;
-    }
+    this.showPreview = (event) => {
+      const url = params.data && params.data.image_url;
+      if (!url || this.preview) return;
 
-    const img = document.createElement('img');
-    img.src = url;
-    img.alt = params.value || 'Card image';
-    img.style.width = '240px';
-    img.style.display = 'block';
-    img.style.borderRadius = '8px';
-    this.eGui.appendChild(img);
+      const preview = document.createElement('div');
+      preview.style.position = 'fixed';
+      preview.style.zIndex = '999999';
+      preview.style.pointerEvents = 'none';
+      preview.style.background = '#111827';
+      preview.style.border = '1px solid #4b5563';
+      preview.style.borderRadius = '10px';
+      preview.style.padding = '7px';
+      preview.style.boxShadow = '0 12px 32px rgba(0,0,0,.55)';
+
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = params.value || 'Card image';
+      img.style.width = '240px';
+      img.style.display = 'block';
+      img.style.borderRadius = '8px';
+
+      preview.appendChild(img);
+      document.body.appendChild(preview);
+      this.preview = preview;
+      this.movePreview(event);
+    };
+
+    this.movePreview = (event) => {
+      if (!this.preview) return;
+      const margin = 14;
+      const width = 260;
+      const height = 350;
+
+      let left = event.clientX + margin;
+      let top = event.clientY + margin;
+
+      if (left + width > window.innerWidth) {
+        left = event.clientX - width - margin;
+      }
+      if (top + height > window.innerHeight) {
+        top = Math.max(margin, window.innerHeight - height - margin);
+      }
+
+      this.preview.style.left = left + 'px';
+      this.preview.style.top = top + 'px';
+    };
+
+    this.hidePreview = () => {
+      if (this.preview) {
+        this.preview.remove();
+        this.preview = null;
+      }
+    };
+
+    this.eGui.addEventListener('mouseenter', this.showPreview);
+    this.eGui.addEventListener('mousemove', this.movePreview);
+    this.eGui.addEventListener('mouseleave', this.hidePreview);
   }
 
   getGui() {
     return this.eGui;
   }
+
+  refresh(params) {
+    this.eGui.textContent = params.value || '';
+    return true;
+  }
+
+  destroy() {
+    this.hidePreview();
+  }
 }
 """
 )
-
 mana_renderer = JsCode(
     """
 class ManaSymbolRenderer {
@@ -563,8 +620,7 @@ grid_options = {
             "headerName": "Card",
             "field": "card_name",
             "minWidth": 260,
-            "tooltipComponent": card_tooltip,
-            "tooltipValueGetter": JsCode("function(params) { return params.value; }"),
+            "cellRenderer": card_renderer,
         },
         {
             "headerName": "Weight",
