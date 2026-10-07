@@ -24,3 +24,23 @@ def test_load_card_config(tmp_path: Path) -> None:
     assert config["Sol Ring"].weight == 3
     assert config["Sol Ring"].category == "premium_acceleration"
     assert config["Swamp"].is_land is True
+
+
+def test_parse_moxfield_export_metadata_and_tags() -> None:
+    text = (
+        "1 Alpha Deathclaw (PIP) 91 #Removal\n"
+        "1 Commercial District (PMKM) 259p *F*\n"
+        "1 Kogla, the Titan Ape (PIKO) 162★ *F* #Removal\n"
+        "1 Chainer, Nightmare Adept (PLST) MH2-289 #Reanimation\n"
+        "1 Disciple of Freyalise / Garden of Freyalise (MH3) 250 #Draw\n"
+        "7 Forest (M21) 274\n"
+    )
+
+    deck = parse_deck_text(text)
+
+    assert deck.count("Forest") == 7
+    assert "Alpha Deathclaw" in deck
+    assert "Commercial District" in deck
+    assert "Kogla, the Titan Ape" in deck
+    assert "Chainer, Nightmare Adept" in deck
+    assert "Disciple of Freyalise / Garden of Freyalise" in deck
