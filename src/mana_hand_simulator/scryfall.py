@@ -58,12 +58,36 @@ def fetch_cards(card_names: list[str]) -> tuple[dict[str, dict], list[str]]:
         if start + 75 < len(unique_names):
             time.sleep(0.12)
 
-    by_casefold = {name.casefold(): card for name, card in cards.items()}
+    # Scryfall returns the canonical combined name for double-faced cards
+    # (for example "Agadeem's Awakening // Agadeem, the Undercrypt") even when
+    # the request used only one face name. Build aliases for the combined card
+    # name, the front/back face names, and both sides of " // " names.
+    aliases: dict[str, dict] = {}
+    for card in cards.values():
+        canonical = str(card.get("name", "")).strip()
+        if canonical:
+            aliases[canonical.casefold()] = card
+            for part in canonical.split(" // "):
+                if part.strip():
+                    aliases[part.strip().casefold()] = card
+
+        for face in card.get("card_faces") or []:
+            face_name = str(face.get("name", "")).strip()
+            if face_name:
+                aliases[face_name.casefold()] = card
+
     normalized: dict[str, dict] = {}
+    unresolved: list[str] = []
     for requested in unique_names:
-        match = by_casefold.get(requested.casefold())
+        match = aliases.get(requested.casefold())
         if match is not None:
             normalized[requested] = match
+        else:
+            unresolved.append(requested)
+
+    # The API's not_found list is authoritative, but include any request we
+    # could not map back to its original decklist spelling as a safety net.
+    missing = list(dict.fromkeys([*missing, *unresolved]))
 
     return normalized, missing
 
@@ -162,20 +186,26 @@ def is_mdfc_land(card: dict) -> bool:
 
 
 def produced_mana(card: dict) -> str:
-    """Return a compact WUBRGC string from Scryfall's produced_mana field."""
+    """Return a compact WUBRGC string for all mana-producing faces of a card."""
     values = set(card.get("produced_mana") or [])
+    for face in card.get("card_faces") or []:
+        values.update(face.get("produced_mana") or [])
     return "".join(color for color in "WUBRGC" if color in values)
 
 
 def card_image_url(card: dict) -> str | None:
+    """Return the normal Scryfall image, including double-faced cards."""
     image_uris = card.get("image_uris") or {}
-    if image_uris.get("normal"):
-        return image_uris["normal"]
+    for size in ("normal", "large", "png"):
+        if image_uris.get(size):
+            return image_uris[size]
 
+    # DFCs commonly store image URIs on the individual faces.
     for face in card.get("card_faces") or []:
         face_images = face.get("image_uris") or {}
-        if face_images.get("normal"):
-            return face_images["normal"]
+        for size in ("normal", "large", "png"):
+            if face_images.get(size):
+                return face_images[size]
 
     return None
 
@@ -207,35 +237,43 @@ def deck_summary(deck: list[str], cards: dict[str, dict]) -> dict:
         if not card:
             continue
 
-        if is_land_card(card):
+        land_capable = is_land_card(card)
+        if land_capable:
             land_count += quantity
+            type_counts["Land"] += quantity
             if is_mdfc_land(card):
                 mdfc_land_count += quantity
 
         nonland_faces = _nonland_faces(card)
         if not nonland_faces:
-            type_counts["Land"] += quantity
             continue
 
-        # Use the main/nonland face type for broad deck composition.
-        type_line = str(nonland_faces[0].get("type_line", card.get("type_line", "")))
-        if "Creature" in type_line:
-            bucket = "Creature"
-        elif "Artifact" in type_line:
-            bucket = "Artifact"
-        elif "Enchantment" in type_line:
-            bucket = "Enchantment"
-        elif "Planeswalker" in type_line:
-            bucket = "Planeswalker"
-        elif "Instant" in type_line:
-            bucket = "Instant"
-        elif "Sorcery" in type_line:
-            bucket = "Sorcery"
-        elif "Battle" in type_line:
-            bucket = "Battle"
-        else:
-            bucket = "Other"
-        type_counts[bucket] += quantity
+        # A modal DFC can belong to more than one useful type bucket. Count
+        # each distinct nonland face type once, while also counting its land
+        # face above. This makes an Instant // Land appear in both categories.
+        buckets: set[str] = set()
+        for face in nonland_faces:
+            type_line = str(face.get("type_line", card.get("type_line", "")))
+            if "Creature" in type_line:
+                buckets.add("Creature")
+            if "Artifact" in type_line:
+                buckets.add("Artifact")
+            if "Enchantment" in type_line:
+                buckets.add("Enchantment")
+            if "Planeswalker" in type_line:
+                buckets.add("Planeswalker")
+            if "Instant" in type_line:
+                buckets.add("Instant")
+            if "Sorcery" in type_line:
+                buckets.add("Sorcery")
+            if "Battle" in type_line:
+                buckets.add("Battle")
+
+        if not buckets:
+            buckets.add("Other")
+
+        for bucket in buckets:
+            type_counts[bucket] += quantity
 
         mv = float(card.get("cmc") or 0.0)
         total_mv += mv * quantity
