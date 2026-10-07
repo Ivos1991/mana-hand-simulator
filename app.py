@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from io import StringIO
 from itertools import combinations
 from math import comb
@@ -95,6 +96,70 @@ def load_default_config() -> pd.DataFrame:
     if "produces" not in frame.columns:
         frame["produces"] = ""
     return frame
+
+
+def deck_fingerprint(deck: list[str]) -> str:
+    """Stable identity for the currently parsed library, including quantities/order."""
+    payload = "\n".join(deck).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def sync_config_to_deck(
+    frame: pd.DataFrame,
+    deck: list[str],
+) -> pd.DataFrame:
+    """Keep config only for the current deck and preserve rows by card name."""
+    frame = ensure_config_shape(frame)
+    existing = {
+        str(row["card_name"]).strip(): row.to_dict()
+        for _, row in frame.iterrows()
+        if str(row["card_name"]).strip()
+        and str(row["card_name"]).strip().lower() != "nan"
+    }
+
+    rows: list[dict] = []
+    for name in dict.fromkeys(deck):
+        if name in existing:
+            row = dict(existing[name])
+            row["card_name"] = name
+            rows.append(row)
+        else:
+            rows.append(
+                {
+                    "card_name": name,
+                    "weight": 0.0,
+                    "type": "Other / Unscored",
+                    "is_land": False,
+                    "produces": "",
+                    "suggested_category": "",
+                    "suggested_weight": float("nan"),
+                    "suggestion_confidence": "",
+                }
+            )
+
+    if not rows:
+        return ensure_config_shape(pd.DataFrame(columns=[
+            "card_name",
+            "weight",
+            "type",
+            "is_land",
+            "produces",
+            "suggested_category",
+            "suggested_weight",
+            "suggestion_confidence",
+        ]))
+
+    return ensure_config_shape(pd.DataFrame(rows))
+
+
+def invalidate_deck_derived_state() -> None:
+    """Drop values that belong to a previous deck, but keep user-editable controls."""
+    for key in (
+        "scryfall_cards",
+        "scryfall_missing",
+        "deck_summary",
+    ):
+        st.session_state.pop(key, None)
 
 
 def ensure_config_shape(frame: pd.DataFrame) -> pd.DataFrame:
@@ -464,6 +529,9 @@ for color in COLORS:
     st.session_state.setdefault(f"color_{color}", 100.0 if color == "B" else 0.0)
 st.session_state.setdefault("config_editor_version", 0)
 st.session_state.setdefault("commander_name", DEFAULT_COMMANDER)
+st.session_state.setdefault("deck_text", load_default_deck())
+st.session_state.setdefault("last_deck_upload_fingerprint", None)
+st.session_state.setdefault("last_config_upload_fingerprint", None)
 
 st.title("Mana Hand Simulator")
 st.caption(
@@ -499,15 +567,19 @@ with deck_col:
     )
 
     if uploaded_deck is not None:
-        deck_default = uploaded_deck.getvalue().decode("utf-8")
-    else:
-        deck_default = load_default_deck()
+        upload_bytes = uploaded_deck.getvalue()
+        upload_fingerprint = hashlib.sha256(upload_bytes).hexdigest()
+        if upload_fingerprint != st.session_state["last_deck_upload_fingerprint"]:
+            st.session_state["deck_text"] = upload_bytes.decode("utf-8")
+            st.session_state["last_deck_upload_fingerprint"] = upload_fingerprint
+            st.session_state["config_editor_version"] += 1
+            st.rerun()
 
     deck_text = st.text_area(
         "Deck",
-        value=deck_default,
+        key="deck_text",
         height=360,
-        help="The default is the Avacyn example used to develop the simulator.",
+        help="Paste a 99-card library or upload a decklist. Changing decks resets deck-derived data but preserves settings for cards shared by both lists.",
     )
 
 with settings_col:
@@ -544,6 +616,28 @@ try:
 except Exception:
     parsed_deck = []
 
+if parsed_deck:
+    current_deck_fingerprint = deck_fingerprint(parsed_deck)
+    previous_deck_fingerprint = st.session_state.get("active_deck_fingerprint")
+
+    if previous_deck_fingerprint != current_deck_fingerprint:
+        if "config_frame" in st.session_state:
+            source_frame = st.session_state["config_frame"]
+        elif previous_deck_fingerprint is None:
+            source_frame = load_default_config()
+        else:
+            source_frame = pd.DataFrame()
+
+        st.session_state["config_frame"] = sync_config_to_deck(
+            source_frame,
+            parsed_deck,
+        )
+        st.session_state["active_deck_fingerprint"] = current_deck_fingerprint
+        st.session_state["config_editor_version"] += 1
+        invalidate_deck_derived_state()
+else:
+    current_deck_fingerprint = ""
+
 with st.container(border=True):
     st.subheader("3. Commander")
     st.caption(
@@ -567,6 +661,12 @@ with st.container(border=True):
             disabled=not commander_name.strip(),
         )
 
+    current_commander_query = commander_name.strip().casefold()
+    loaded_commander_query = st.session_state.get("loaded_commander_query")
+    if loaded_commander_query and loaded_commander_query != current_commander_query:
+        st.session_state.pop("commander_card", None)
+        st.session_state.pop("loaded_commander_query", None)
+
     if load_commander:
         try:
             with st.spinner("Loading commander from Scryfall..."):
@@ -578,6 +678,7 @@ with st.container(border=True):
             if not commander_card:
                 raise ValueError("Commander could not be matched on Scryfall.")
             st.session_state["commander_card"] = commander_card
+            st.session_state["loaded_commander_query"] = current_commander_query
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
@@ -651,13 +752,17 @@ with st.container(border=True):
             for color in COLORS:
                 st.session_state[f"color_{color}"] = float(distribution[color])
 
-            base_frame = st.session_state.get("config_frame", load_default_config())
+            base_frame = sync_config_to_deck(
+                st.session_state.get("config_frame", pd.DataFrame()),
+                parsed_deck,
+            )
             st.session_state["config_frame"] = enrich_config_from_scryfall(
                 base_frame, parsed_deck, scryfall_cards
             )
             st.session_state["scryfall_cards"] = scryfall_cards
             if commander_name.strip() and commander_name.strip() in scryfall_cards:
                 st.session_state["commander_card"] = scryfall_cards[commander_name.strip()]
+                st.session_state["loaded_commander_query"] = current_commander_query
             st.session_state["deck_summary"] = deck_summary(parsed_deck, scryfall_cards)
             st.session_state["config_editor_version"] += 1
 
@@ -754,14 +859,30 @@ uploaded_config = st.file_uploader(
 )
 
 if uploaded_config is not None:
-    config_frame = ensure_config_shape(
-        pd.read_csv(StringIO(uploaded_config.getvalue().decode("utf-8")))
-    )
-    st.session_state["config_frame"] = config_frame
+    config_bytes = uploaded_config.getvalue()
+    config_upload_fingerprint = hashlib.sha256(config_bytes).hexdigest()
+    if config_upload_fingerprint != st.session_state["last_config_upload_fingerprint"]:
+        uploaded_frame = ensure_config_shape(
+            pd.read_csv(StringIO(config_bytes.decode("utf-8")))
+        )
+        st.session_state["config_frame"] = sync_config_to_deck(
+            uploaded_frame,
+            parsed_deck,
+        )
+        st.session_state["last_config_upload_fingerprint"] = config_upload_fingerprint
+        st.session_state["config_editor_version"] += 1
+        st.rerun()
 elif "config_frame" not in st.session_state:
-    st.session_state["config_frame"] = load_default_config()
+    st.session_state["config_frame"] = sync_config_to_deck(
+        load_default_config(),
+        parsed_deck,
+    )
 
-config_frame = ensure_config_shape(st.session_state["config_frame"])
+config_frame = sync_config_to_deck(
+    st.session_state["config_frame"],
+    parsed_deck,
+)
+st.session_state["config_frame"] = config_frame
 
 scryfall_cards = st.session_state.get("scryfall_cards", {})
 grid_frame = config_frame.copy()
@@ -979,6 +1100,7 @@ grid_options = {
             "field": "card_name",
             "minWidth": 260,
             "cellRenderer": card_renderer,
+            "editable": False,
         },
         {
             "headerName": "Weight",
@@ -1037,6 +1159,7 @@ grid_options = {
     "tooltipShowDelay": 250,
     "tooltipHideDelay": 5000,
     "stopEditingWhenCellsLoseFocus": True,
+    "getRowId": JsCode("function(params) { return params.data.card_name; }"),
 }
 
 grid_response = AgGrid(
@@ -1048,12 +1171,19 @@ grid_response = AgGrid(
     update_mode=GridUpdateMode.VALUE_CHANGED,
     allow_unsafe_jscode=True,
     fit_columns_on_grid_load=True,
+    key=(
+        f"config_grid_{st.session_state['config_editor_version']}_"
+        f"{current_deck_fingerprint[:10]}"
+    ),
 )
 
 edited_config = pd.DataFrame(grid_response["data"]).drop(
     columns=["image_url"], errors="ignore"
 )
-edited_config = ensure_config_shape(edited_config)
+edited_config = sync_config_to_deck(
+    edited_config,
+    parsed_deck,
+)
 
 apply_suggestions = st.button(
     "Apply suggested categories & weights",
@@ -1071,7 +1201,7 @@ if apply_suggestions:
     )
     weight_mask = numeric_suggestions.notna()
     edited_config.loc[weight_mask, "weight"] = numeric_suggestions[weight_mask]
-    edited_config = ensure_config_shape(edited_config)
+    edited_config = sync_config_to_deck(edited_config, parsed_deck)
     st.session_state["config_frame"] = edited_config
     st.session_state["config_editor_version"] += 1
     st.success("Suggestions applied. Review the table and adjust any deck-specific cards.")
@@ -1155,6 +1285,7 @@ if st.button("Run simulation", type="primary", width="stretch"):
             active_commander = commander_cards.get(commander_name.strip())
             if active_commander:
                 st.session_state["commander_card"] = active_commander
+                st.session_state["loaded_commander_query"] = commander_name.strip().casefold()
 
         if active_commander:
             commander_iterations = min(int(iterations), 50_000)
