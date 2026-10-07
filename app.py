@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import StringIO
+from itertools import combinations
 from pathlib import Path
 
 import pandas as pd
@@ -33,40 +34,10 @@ MANA_SYMBOLS = {
     color: f"https://svgs.scryfall.io/card-symbols/{color}.svg"
     for color in COLORS
 }
-PRODUCES_OPTIONS = [
-    "",
-    "C",
-    "W",
-    "U",
-    "B",
-    "R",
-    "G",
-    "WU",
-    "WB",
-    "WR",
-    "WG",
-    "UB",
-    "UR",
-    "UG",
-    "BR",
-    "BG",
-    "RG",
-    "WUB",
-    "WUR",
-    "WUG",
-    "WBR",
-    "WBG",
-    "WRG",
-    "UBR",
-    "UBG",
-    "URG",
-    "BRG",
-    "WUBR",
-    "WUBG",
-    "WURG",
-    "WBRG",
-    "UBRG",
-    "WUBRG",
+PRODUCES_OPTIONS = [""] + [
+    "".join(combo)
+    for size in range(1, 7)
+    for combo in combinations("WUBRGC", size)
 ]
 
 
