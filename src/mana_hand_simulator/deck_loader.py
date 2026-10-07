@@ -8,10 +8,10 @@ from pathlib import Path
 from .models import CardConfig
 
 
-MOXFIELD_TAG_RE = re.compile(r"\\s+#.*$")
-MOXFIELD_FOIL_RE = re.compile(r"\\s+\\*[^*]+\\*\\s*$")
+MOXFIELD_TAG_RE = re.compile(r"\s+#.*$")
+MOXFIELD_FOIL_RE = re.compile(r"\s+\*[^*]+\*\s*$")
 MOXFIELD_PRINTING_RE = re.compile(
-    r"\\s+\\([A-Za-z0-9]+\\)\\s+\\S+\\s*$"
+    r"\s+\([A-Za-z0-9]+\)\s+\S+\s*$"
 )
 
 
