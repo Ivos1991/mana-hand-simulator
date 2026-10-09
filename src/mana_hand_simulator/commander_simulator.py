@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 from .models import CardConfig
 
@@ -124,6 +125,62 @@ def _selected_lands(
     return lands[:land_slots]
 
 
+COLOR_BITS = {
+    "W": 1 << 0,
+    "U": 1 << 1,
+    "B": 1 << 2,
+    "R": 1 << 3,
+    "G": 1 << 4,
+}
+
+
+def _source_mask(produces: tuple[str, ...]) -> int:
+    mask = 0
+    for color in produces:
+        mask |= COLOR_BITS.get(color, 0)
+    return mask
+
+
+@lru_cache(maxsize=50_000)
+def _can_pay_colored_pips(
+    source_masks: tuple[int, ...],
+    requirements: tuple[int, int, int, int, int],
+) -> bool:
+    """Assign each mana source to at most one colored pip.
+
+    A dual/tri-land can choose among its colors; it cannot pay several colored
+    pips at once. This fixes the old estimator's multicolor over-counting.
+    """
+    required_colors: list[int] = []
+    for index, count in enumerate(requirements):
+        required_colors.extend([1 << index] * count)
+
+    if not required_colors:
+        return True
+    if len(source_masks) < len(required_colors):
+        return False
+
+    # Hardest pips first: colors supported by fewer sources.
+    required_colors.sort(
+        key=lambda bit: sum(bool(mask & bit) for mask in source_masks)
+    )
+
+    def search(position: int, used: int) -> bool:
+        if position == len(required_colors):
+            return True
+
+        bit = required_colors[position]
+        for source_index, mask in enumerate(source_masks):
+            flag = 1 << source_index
+            if used & flag or not (mask & bit):
+                continue
+            if search(position + 1, used | flag):
+                return True
+        return False
+
+    return search(0, 0)
+
+
 def _castable_by_turn(
     drawn: list[str],
     turn: int,
@@ -147,10 +204,10 @@ def _castable_by_turn(
     )
 
     total_mana = len(active_lands)
-    color_capacity = {
-        color: sum(color in land.produces for land in active_lands)
-        for color in COLORS
-    }
+    colored_source_masks: list[int] = [
+        _source_mask(land.produces)
+        for land in active_lands
+    ]
 
     total_discount = 0
 
@@ -172,9 +229,8 @@ def _castable_by_turn(
         total_mana += bonus
 
         if bonus > 0:
-            for color in COLORS:
-                if color in config.produces:
-                    color_capacity[color] += bonus
+            mask = _source_mask(config.produces)
+            colored_source_masks.extend([mask] * bonus)
 
         total_discount += _discount_amount(config)
 
@@ -185,10 +241,13 @@ def _castable_by_turn(
     if total_mana < effective_cost:
         return False
 
-    return all(
-        color_capacity[color] >= required
-        for color, required in colored_requirements.items()
-        if required > 0
+    requirements = tuple(
+        int(colored_requirements[color])
+        for color in COLORS
+    )
+    return _can_pay_colored_pips(
+        tuple(sorted(colored_source_masks)),
+        requirements,
     )
 
 
