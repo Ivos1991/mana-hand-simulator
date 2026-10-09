@@ -57,8 +57,16 @@ def commander_requirements(card: dict) -> tuple[int, dict[str, int]]:
     return generic + colored_total, colored
 
 
-def _category_activation_turn(category: str) -> int:
-    return {
+def _category_activation_turn(
+    category: str,
+    mana_value: float | None = None,
+) -> int:
+    """Earliest conservative turn an acceleration piece can contribute.
+
+    The old estimator let a 2-mana ramp spell both get cast and provide
+    extra mana on turn 2, effectively spending the same mana twice.
+    """
+    base = {
         "Premium Acceleration": 1,
         "Mana Rock": 2,
         "Ramp / Accelerator": 2,
@@ -66,6 +74,15 @@ def _category_activation_turn(category: str) -> int:
         "Conditional Mana": 3,
         "Big Mana": 4,
     }.get(category, 99)
+
+    if mana_value is None:
+        return base
+
+    mv = max(0, int(mana_value))
+    if mv == 0 and category == "Premium Acceleration":
+        return 1
+
+    return max(base, mv + 1)
 
 
 def _mana_bonus(config: CardConfig) -> int:
@@ -113,6 +130,7 @@ def _castable_by_turn(
     commander_mv: int,
     colored_requirements: dict[str, int],
     card_config: dict[str, CardConfig],
+    card_data: dict[str, dict] | None = None,
 ) -> bool:
     demanded_colors = tuple(
         color for color in COLORS if colored_requirements.get(color, 0) > 0
@@ -141,7 +159,12 @@ def _castable_by_turn(
         if not config or config.is_land:
             continue
 
-        activation_turn = _category_activation_turn(config.category)
+        card = (card_data or {}).get(name, {})
+        mana_value = card.get("cmc")
+        activation_turn = _category_activation_turn(
+            config.category,
+            float(mana_value) if mana_value is not None else None,
+        )
         if turn < activation_turn:
             continue
 
@@ -177,6 +200,7 @@ def simulate_commander_cast_turns(
     iterations: int = 50_000,
     seed: int | None = None,
     max_turn: int = 10,
+    card_data: dict[str, dict] | None = None,
 ) -> CommanderCastResult:
     if not deck:
         raise ValueError("Deck is empty.")
@@ -205,6 +229,7 @@ def simulate_commander_cast_turns(
                 commander_mv,
                 colored_requirements,
                 card_config,
+                card_data,
             ):
                 first_turn = turn
                 break
