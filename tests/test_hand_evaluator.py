@@ -8,11 +8,11 @@ from mana_hand_simulator.models import CardConfig, HandTier
 
 
 def test_explosive_hand() -> None:
-    assert classify_hand(lands=3, score=5) is HandTier.A
+    assert classify_hand(lands=3, score=7) is HandTier.A
 
 
 def test_strong_hand() -> None:
-    assert classify_hand(lands=3, score=3) is HandTier.B
+    assert classify_hand(lands=3, score=4) is HandTier.B
 
 
 def test_bad_land_count_is_mulligan() -> None:
@@ -22,8 +22,8 @@ def test_bad_land_count_is_mulligan() -> None:
 def test_color_coverage_penalizes_missing_required_color() -> None:
     config = {
         "Island": CardConfig("Island", 0, "land", True, ("U",)),
-        "Sol Ring": CardConfig("Sol Ring", 3, "rock", False, ("C",)),
-        "Ramp": CardConfig("Ramp", 2, "ramp", False, ()),
+        "Sol Ring": CardConfig("Sol Ring", 4, "rock", False, ("C",)),
+        "Ramp": CardConfig("Ramp", 3, "ramp", False, ()),
     }
     hand = ("Island", "Island", "Sol Ring", "Ramp", "Filler", "Filler", "Filler")
     demand = {"U": 50, "B": 50, "C": 0}
