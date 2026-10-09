@@ -180,8 +180,8 @@ def _tier_from_metrics(
 
     valid = (lands >= 2) & (lands <= 4)
     tier[valid & (score >= 1)] = TIER_C
-    tier[valid & (score >= 3)] = TIER_B
-    tier[((lands == 2) | (lands == 3)) & (score >= 5)] = TIER_A
+    tier[valid & (score >= 4)] = TIER_B
+    tier[((lands == 2) | (lands == 3)) & (score >= 7)] = TIER_A
 
     # Five-land hands remain D, matching classify_hand's current behavior.
     tier[(lands > 5) | (lands < 2)] = TIER_D
