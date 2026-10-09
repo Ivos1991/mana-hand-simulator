@@ -119,10 +119,10 @@ def classify_hand(*, lands: int, score: float) -> HandTier:
     if lands < 2 or lands > 5:
         return HandTier.D
 
-    if lands in {2, 3} and score >= 5:
+    if lands in {2, 3} and score >= 7:
         return HandTier.A
 
-    if lands in {2, 3, 4} and score >= 3:
+    if lands in {2, 3, 4} and score >= 4:
         return HandTier.B
 
     if lands in {2, 3, 4} and score >= 1:
