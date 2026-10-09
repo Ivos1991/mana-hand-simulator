@@ -15,9 +15,9 @@ def _config() -> dict[str, CardConfig]:
     return {
         "Swamp": CardConfig("Swamp", 0.0, "Land", True, ("B",)),
         "Island": CardConfig("Island", 0.0, "Land", True, ("U",)),
-        "Sol Ring": CardConfig("Sol Ring", 3.0, "Premium Acceleration", False, ("C",)),
-        "Signet": CardConfig("Signet", 2.0, "Mana Rock", False, ("U", "B")),
-        "Ramp": CardConfig("Ramp", 1.5, "Ramp / Accelerator", False, ()),
+        "Sol Ring": CardConfig("Sol Ring", 4.0, "Premium Acceleration", False, ("C",)),
+        "Signet": CardConfig("Signet", 3.0, "Mana Rock", False, ("U", "B")),
+        "Ramp": CardConfig("Ramp", 2.0, "Ramp / Accelerator", False, ()),
         "Filler": CardConfig("Filler", 0.0, "Other / Unscored", False, ()),
     }
 
