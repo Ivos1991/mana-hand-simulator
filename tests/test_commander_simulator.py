@@ -1,4 +1,8 @@
+import numpy as np
+
 from mana_hand_simulator.commander_simulator import (
+    _category_activation_turn,
+    _hall_color_check,
     commander_requirements,
     simulate_commander_cast_turns,
 )
@@ -35,3 +39,51 @@ def test_basic_commander_curve_is_cumulative() -> None:
     assert result.cast_by_turn[3] <= result.cast_by_turn[4]
     assert result.cast_by_turn[4] <= result.cast_by_turn[5]
     assert result.cast_by_turn[3] > 0
+
+
+def test_two_mana_ramp_does_not_contribute_on_turn_two() -> None:
+    assert _category_activation_turn("Ramp / Accelerator", 2) == 3
+    assert _category_activation_turn("Mana Rock", 2) == 3
+
+
+def test_multicolor_source_pays_only_one_colored_pip() -> None:
+    # Exact-mask counts: one BRG source lives in mask 28.
+    counts = np.zeros((1, 32), dtype=np.int16)
+    counts[0, 28] = 1
+    requirement = np.array([0, 0, 1, 1, 1], dtype=np.int16)
+    assert not _hall_color_check(counts, requirement)[0]
+
+    counts[0, 28] = 3
+    assert _hall_color_check(counts, requirement)[0]
+
+
+def test_henzie_style_commander_has_zero_turn_two_without_zero_cost_acceleration() -> None:
+    deck = ["Jund Land"] * 36 + ["Two Mana Ramp"] * 10 + ["Filler"] * 53
+    config = {
+        "Jund Land": CardConfig(
+            "Jund Land", 0, "Land", True, ("B", "R", "G")
+        ),
+        "Two Mana Ramp": CardConfig(
+            "Two Mana Ramp", 2, "Ramp / Accelerator", False, ("G",)
+        ),
+        "Filler": CardConfig(
+            "Filler", 0, "Other / Unscored", False, ()
+        ),
+    }
+    card_data = {
+        "Two Mana Ramp": {"cmc": 2},
+    }
+    commander = {"mana_cost": "{B}{R}{G}", "cmc": 3}
+
+    result = simulate_commander_cast_turns(
+        deck,
+        config,
+        commander,
+        iterations=2_000,
+        seed=19,
+        max_turn=4,
+        batch_size=500,
+        card_data=card_data,
+    )
+
+    assert result.cast_by_turn[2] == 0.0
