@@ -414,6 +414,26 @@ def opening_access_probability(deck_size: int, sources: int, hand_size: int = 7)
     return (1.0 - misses) * 100.0
 
 
+def source_access_by_turn(
+    deck_size: int,
+    sources: int,
+    turn: int,
+) -> float:
+    """Chance of seeing at least one configured source by a Commander turn."""
+    cards_seen = min(deck_size, 7 + max(0, turn))
+    return opening_access_probability(deck_size, sources, cards_seen)
+
+
+def color_access_label(access_by_turn: float) -> str:
+    if access_by_turn >= 90:
+        return "Strong"
+    if access_by_turn >= 80:
+        return "Reasonable"
+    if access_by_turn >= 70:
+        return "Watch"
+    return "Weak"
+
+
 def recommended_sources_for_demand(
     deck_size: int,
     demand_share: float,
@@ -482,36 +502,51 @@ def build_diagnostics(
     access_rates = opening.color_access_rates or {}
     source_counts = source_count_by_color(deck, card_config)
 
-    if len(demanded) > 1:
-        full = opening.full_color_access_rate
-        if full < 50:
-            notes.append((
-                "bad",
-                f"Only {full:.1f}% of opening hands contain a source for every deck color. "
-                "Color fixing is a major bottleneck."
-            ))
-        elif full < 70:
+    if len(demanded) > 1 and opening.full_color_access_rate < 40:
+        notes.append((
+            "warn",
+            f"Only {opening.full_color_access_rate:.1f}% of opening sevens contain a source "
+            "for every deck color. This is worth watching, especially if your commander "
+            "needs all of those colors early."
+        ))
+
+    color_health: list[tuple[str, float, float]] = []
+    for color, demand in sorted(
+        demanded.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    ):
+        current_sources = source_counts.get(color, 0)
+        turn_three_access = source_access_by_turn(
+            len(deck),
+            current_sources,
+            3,
+        )
+        color_health.append((color, demand, turn_three_access))
+
+        threshold = 80.0 if demand >= 15 else 70.0
+        if turn_three_access < threshold:
             notes.append((
                 "warn",
-                f"{full:.1f}% of opening hands contain all deck colors. "
-                "Your mana works, but fixing could be more consistent."
+                f"{COLOR_NAMES[color]} is the weakest early color: about "
+                f"{turn_three_access:.1f}% chance to see a {color} source by turn 3 "
+                f"from {current_sources} configured source(s). Consider improving fixing "
+                "for that color, preferably with lands/sources that cover multiple deck colors."
             ))
 
-    for color, demand in sorted(demanded.items(), key=lambda item: item[1], reverse=True):
-        access = float(access_rates.get(color, 0.0))
-        current_sources = source_counts.get(color, 0)
-        target_sources, target_access = recommended_sources_for_demand(len(deck), demand)
-        shortfall = max(0, target_sources - current_sources)
-
-        if access + 0.01 < target_access and shortfall > 0:
-            name = COLOR_NAMES[color]
-            notes.append((
-                "bad" if access < 60 else "warn",
-                f"{name}: {demand:.1f}% of colored demand, but only {access:.1f}% of opening hands "
-                f"contain a {color} source. You currently have {current_sources} source(s). "
-                f"Consider about {shortfall} more source(s) that can produce {color}, ideally by "
-                "swapping colorless or off-color sources rather than only increasing deck size."
-            ))
+    if color_health and not any(
+        access < (80.0 if demand >= 15 else 70.0)
+        for _, demand, access in color_health
+    ):
+        weakest_color, _, weakest_access = min(
+            color_health,
+            key=lambda item: item[2],
+        )
+        notes.append((
+            "good",
+            f"Early color access looks reasonable. The weakest color is "
+            f"{COLOR_NAMES[weakest_color]} at about {weakest_access:.1f}% by turn 3."
+        ))
 
     if len(notes) == 1 and final_ab >= 60:
         notes.append(("good", "No obvious mana-base bottleneck was detected from these opening-hand results."))
@@ -1299,6 +1334,7 @@ if st.button("Run simulation", type="primary", width="stretch"):
                     iterations=commander_iterations,
                     seed=int(seed) if use_seed else None,
                     max_turn=10,
+                    card_data=scryfall_cards,
                 )
 
             commander_rows = [
@@ -1327,9 +1363,10 @@ if st.button("Run simulation", type="primary", width="stretch"):
             st.line_chart(curve)
 
             st.caption(
-                "This is an estimate using your land flags, mana colors, categories and weights. "
-                "It models one land drop per turn and category-based acceleration/discount timing; "
-                "unusual cards such as Coffers-style scaling or variable mana can differ in real games."
+                "This is a conservative estimate using land flags, mana colors, card mana values, "
+                "categories and weights. Setup cards are not allowed to spend mana and also provide "
+                "that same mana on the same turn. Complex sequencing, conditional lands and unusual "
+                "mana engines can still differ in real games."
             )
         else:
             st.info("Load a commander above to calculate Turns 1–10.")
@@ -1355,20 +1392,26 @@ if st.button("Run simulation", type="primary", width="stretch"):
                 demand = float(color_demand.get(color, 0.0))
                 if demand <= 0:
                     continue
-                target_sources, target_access = recommended_sources_for_demand(len(deck), demand)
+                by_turn_three = source_access_by_turn(
+                    len(deck),
+                    source_counts[color],
+                    3,
+                )
                 color_rows.append(
                     {
                         "Color": COLOR_NAMES[color],
                         "Demand": f"{demand:.1f}%",
-                        "Sources": source_counts[color],
-                        "Opening access": f"{result.opening.color_access_rates.get(color, 0.0):.1f}%",
-                        "Suggested target": f"{target_sources} sources / ~{target_access:.0f}% access",
+                        "Configured sources": source_counts[color],
+                        "Opening 7": f"{result.opening.color_access_rates.get(color, 0.0):.1f}%",
+                        "By turn 3": f"{by_turn_three:.1f}%",
+                        "Assessment": color_access_label(by_turn_three),
                     }
                 )
             st.dataframe(pd.DataFrame(color_rows), hide_index=True, width="stretch")
             if len(color_rows) > 1:
                 st.caption(
-                    f"All required colors appear together in {result.opening.full_color_access_rate:.1f}% of opening hands."
+                    f"All required colors appear together in {result.opening.full_color_access_rate:.1f}% of opening sevens. "
+                    "This is descriptive, not a target of 100%."
                 )
 
         with st.expander("Simulation details"):
