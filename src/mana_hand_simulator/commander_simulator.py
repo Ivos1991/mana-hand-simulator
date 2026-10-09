@@ -57,8 +57,12 @@ def commander_requirements(card: dict) -> tuple[int, dict[str, int]]:
     return generic + colored_total, colored
 
 
-def _category_activation_turn(category: str) -> int:
-    return {
+def _category_activation_turn(
+    category: str,
+    mana_value: float | None = None,
+) -> int:
+    """Conservative turn when a setup card can start contributing."""
+    base = {
         "Premium Acceleration": 1,
         "Mana Rock": 2,
         "Ramp / Accelerator": 2,
@@ -66,6 +70,15 @@ def _category_activation_turn(category: str) -> int:
         "Conditional Mana": 3,
         "Big Mana": 4,
     }.get(category, 99)
+
+    if mana_value is None:
+        return base
+
+    mv = max(0, int(mana_value))
+    if mv == 0 and category == "Premium Acceleration":
+        return 1
+
+    return max(base, mv + 1)
 
 
 def _mana_bonus(config: CardConfig) -> int:
@@ -92,6 +105,8 @@ def _discount_amount(config: CardConfig) -> int:
 class _PreparedCommanderDeck:
     is_land: np.ndarray
     colors: np.ndarray
+    color_mask: np.ndarray
+    mask_onehot: np.ndarray
     activation_turn: np.ndarray
     mana_bonus: np.ndarray
     discount: np.ndarray
@@ -102,10 +117,12 @@ def _prepare_commander_deck(
     deck: list[str],
     card_config: dict[str, CardConfig],
     demanded_colors: np.ndarray,
+    card_data: dict[str, dict] | None = None,
 ) -> _PreparedCommanderDeck:
     size = len(deck)
     is_land = np.zeros(size, dtype=bool)
     colors = np.zeros((size, 5), dtype=np.int8)
+    color_mask = np.zeros(size, dtype=np.int8)
     activation_turn = np.full(size, 99, dtype=np.int8)
     mana_bonus = np.zeros(size, dtype=np.int8)
     discount = np.zeros(size, dtype=np.int8)
@@ -119,8 +136,15 @@ def _prepare_commander_deck(
         is_land[index] = config.is_land
         for color_index, color in enumerate(COLORS):
             colors[index, color_index] = int(color in config.produces)
+            if color in config.produces:
+                color_mask[index] |= 1 << color_index
 
-        activation_turn[index] = _category_activation_turn(config.category)
+        metadata = (card_data or {}).get(name, {})
+        mana_value = metadata.get("cmc")
+        activation_turn[index] = _category_activation_turn(
+            config.category,
+            float(mana_value) if mana_value is not None else None,
+        )
         mana_bonus[index] = _mana_bonus(config)
         discount[index] = _discount_amount(config)
 
@@ -134,9 +158,13 @@ def _prepare_commander_deck(
                 np.sum(colors[index])
             )
 
+    mask_onehot = np.eye(32, dtype=np.int8)[color_mask]
+
     return _PreparedCommanderDeck(
         is_land=is_land,
         colors=colors,
+        color_mask=color_mask,
+        mask_onehot=mask_onehot,
         activation_turn=activation_turn,
         mana_bonus=mana_bonus,
         discount=discount,
@@ -191,8 +219,6 @@ def _selected_land_stats(
     batch, width = seen.shape
     priority = prepared.land_priority[seen]
 
-    # Preserve stable tie behavior from Python's sort by preferring earlier
-    # cards in the draw order when priority is equal.
     positions = np.arange(width, dtype=np.int16)
     stable_score = np.where(
         priority >= 0,
@@ -208,13 +234,42 @@ def _selected_land_stats(
     valid = np.take_along_axis(priority, chosen_positions, axis=1) >= 0
 
     land_count = np.sum(valid, axis=1, dtype=np.int16)
-    chosen_colors = prepared.colors[chosen_cards]
-    color_capacity = np.sum(
-        chosen_colors * valid[..., None],
+    mask_counts = np.sum(
+        prepared.mask_onehot[chosen_cards] * valid[..., None],
         axis=1,
         dtype=np.int16,
     )
-    return land_count, color_capacity
+    return land_count, mask_counts
+
+
+def _hall_color_check(
+    mask_counts: np.ndarray,
+    requirement: np.ndarray,
+) -> np.ndarray:
+    """Vectorized Hall check for assigning flexible sources to colored pips."""
+    subset_ids = np.arange(1, 32, dtype=np.int16)
+    source_masks = np.arange(32, dtype=np.int16)
+
+    intersects = (
+        (subset_ids[:, None] & source_masks[None, :]) != 0
+    ).astype(np.int16)
+
+    color_bits = (1 << np.arange(5, dtype=np.int16))
+    subset_contains_color = (
+        (subset_ids[:, None] & color_bits[None, :]) != 0
+    ).astype(np.int16)
+    required_by_subset = subset_contains_color @ requirement.astype(np.int16)
+
+    active_subsets = required_by_subset > 0
+    if not np.any(active_subsets):
+        return np.ones(mask_counts.shape[0], dtype=bool)
+
+    available_by_subset = mask_counts @ intersects.T
+    return np.all(
+        available_by_subset[:, active_subsets]
+        >= required_by_subset[active_subsets],
+        axis=1,
+    )
 
 
 def simulate_commander_cast_turns(
@@ -226,6 +281,7 @@ def simulate_commander_cast_turns(
     seed: int | None = None,
     max_turn: int = 10,
     batch_size: int = COMMANDER_BATCH_SIZE,
+    card_data: dict[str, dict] | None = None,
 ) -> CommanderCastResult:
     if not deck:
         raise ValueError("Deck is empty.")
@@ -246,7 +302,7 @@ def simulate_commander_cast_turns(
     generic_requirement = max(0, commander_mv - colored_total)
 
     prepared = _prepare_commander_deck(
-        deck, card_config, demanded_colors
+        deck, card_config, demanded_colors, card_data
     )
     rng = np.random.default_rng(seed)
     first_counts = np.zeros(max_turn + 1, dtype=np.int64)
@@ -271,7 +327,7 @@ def simulate_commander_cast_turns(
             seen_count = min(max_draws, 7 + turn)
             seen = drawn_order[:, :seen_count]
 
-            land_mana, color_capacity = _selected_land_stats(
+            land_mana, source_mask_counts = _selected_land_stats(
                 seen, turn, prepared
             )
 
@@ -285,13 +341,12 @@ def simulate_commander_cast_turns(
             bonus_mana = np.sum(bonuses, axis=1, dtype=np.int16)
             total_mana = land_mana + bonus_mana
 
-            bonus_colors = (
-                prepared.colors[seen]
-                * bonuses[..., None]
+            bonus_mask_counts = np.sum(
+                prepared.mask_onehot[seen] * bonuses[..., None],
+                axis=1,
+                dtype=np.int16,
             )
-            color_capacity = color_capacity + np.sum(
-                bonus_colors, axis=1, dtype=np.int16
-            )
+            source_mask_counts = source_mask_counts + bonus_mask_counts
 
             discounts = prepared.discount[seen] * active_nonlands
             total_discount = np.sum(
@@ -302,9 +357,9 @@ def simulate_commander_cast_turns(
             )
 
             enough_total = total_mana >= effective_cost
-            enough_colors = np.all(
-                color_capacity >= requirement,
-                axis=1,
+            enough_colors = _hall_color_check(
+                source_mask_counts,
+                requirement,
             )
             castable = unresolved & enough_total & enough_colors
 
